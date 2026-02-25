@@ -28,38 +28,78 @@ client = S2.Client.new(config)
 Create a stream, write some events, and read them back.
 
 ```elixir
-# Setup
-config = S2.Config.new(base_url: "https://aws.s2.dev", token: "your-token")
-client = S2.Client.new(config)
+# config/config.exs
+config :my_app, :s2,
+  base_url: "https://aws.s2.dev",
+  token: System.get_env("S2_TOKEN")
+```
 
-# Create a basin and stream
-{:ok, _} = S2.Basins.create_basin(%S2.CreateBasinRequest{basin: "my-app"}, server: client)
-{:ok, _} = S2.Streams.create_stream(%S2.CreateStreamRequest{stream: "events"},
-  server: client, basin: "my-app")
+```elixir
+# lib/my_app/application.ex
+def start(_type, _args) do
+  s2_config = Application.fetch_env!(:my_app, :s2)
 
-# Connect to the data plane
-{:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev", token: "your-token")
+  children = [
+    {MyApp.EventLog, s2_config}
+  ]
 
-# Write some events
-events = [
-  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "signup", user: "alice"})},
-  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "login", user: "alice"})},
-  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "signup", user: "bob"})}
-]
-
-input = %S2.V1.AppendInput{records: events}
-{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-app", "events", input)
-# ack.start_seq_num is the sequence number of the first record written
-
-# Read them back from the beginning
-{:ok, batch, conn} = S2.S2S.Read.call(conn, "my-app", "events", seq_num: 0)
-
-for record <- batch.records do
-  IO.puts("seq=#{record.seq_num} #{record.body}")
+  Supervisor.start_link(children, strategy: :one_for_one)
 end
-# seq=0 {"type":"signup","user":"alice"}
-# seq=1 {"type":"login","user":"alice"}
-# seq=2 {"type":"signup","user":"bob"}
+```
+
+```elixir
+# lib/my_app/event_log.ex
+defmodule MyApp.EventLog do
+  use GenServer
+
+  alias S2.Patterns.Serialization
+
+  @basin "my-app"
+  @stream "events"
+  @serializer %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
+
+  def start_link(s2_config) do
+    GenServer.start_link(__MODULE__, s2_config, name: __MODULE__)
+  end
+
+  def append(event), do: GenServer.call(__MODULE__, {:append, event})
+  def read(seq_num \\ 0), do: GenServer.call(__MODULE__, {:read, seq_num})
+
+  @impl true
+  def init(s2_config) do
+    config = S2.Config.new(base_url: s2_config[:base_url], token: s2_config[:token])
+    client = S2.Client.new(config)
+    {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
+
+    {:ok, %{client: client, conn: conn, writer: Serialization.writer()}}
+  end
+
+  @impl true
+  def handle_call({:append, event}, _from, state) do
+    {input, writer} = Serialization.prepare(state.writer, event, @serializer)
+    {:ok, ack, conn} = S2.S2S.Append.call(state.conn, @basin, @stream, input)
+    {:reply, {:ok, ack}, %{state | conn: conn, writer: writer}}
+  end
+
+  def handle_call({:read, seq_num}, _from, state) do
+    {:ok, batch, conn} = S2.S2S.Read.call(state.conn, @basin, @stream, seq_num: seq_num)
+    reader = Serialization.reader()
+    {messages, _reader} = Serialization.decode(reader, batch.records, @serializer)
+    {:reply, {:ok, messages}, %{state | conn: conn}}
+  end
+end
+```
+
+```elixir
+# Usage
+{:ok, _} = MyApp.EventLog.append(%{type: "signup", user: "alice"})
+{:ok, _} = MyApp.EventLog.append(%{type: "login", user: "alice"})
+{:ok, _} = MyApp.EventLog.append(%{type: "signup", user: "bob"})
+
+{:ok, events} = MyApp.EventLog.read()
+# [%{"type" => "signup", "user" => "alice"},
+#  %{"type" => "login", "user" => "alice"},
+#  %{"type" => "signup", "user" => "bob"}]
 ```
 
 For high-throughput or long-lived workloads, use streaming sessions instead of single requests — see [Streaming Append](#streaming-append) and [Streaming Read](#streaming-read) below.
