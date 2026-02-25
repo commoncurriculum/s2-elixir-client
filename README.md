@@ -23,6 +23,47 @@ client = S2.Client.new(config)
 {:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev", token: "your-token")
 ```
 
+## Example: Event Log
+
+Create a stream, write some events, and read them back.
+
+```elixir
+# Setup
+config = S2.Config.new(base_url: "https://aws.s2.dev", token: "your-token")
+client = S2.Client.new(config)
+
+# Create a basin and stream
+{:ok, _} = S2.Basins.create_basin(%S2.CreateBasinRequest{basin: "my-app"}, server: client)
+{:ok, _} = S2.Streams.create_stream(%S2.CreateStreamRequest{stream: "events"},
+  server: client, basin: "my-app")
+
+# Connect to the data plane
+{:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev", token: "your-token")
+
+# Write some events
+events = [
+  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "signup", user: "alice"})},
+  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "login", user: "alice"})},
+  %S2.V1.AppendRecord{body: Jason.encode!(%{type: "signup", user: "bob"})}
+]
+
+input = %S2.V1.AppendInput{records: events}
+{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-app", "events", input)
+# ack.start_seq_num is the sequence number of the first record written
+
+# Read them back from the beginning
+{:ok, batch, conn} = S2.S2S.Read.call(conn, "my-app", "events", seq_num: 0)
+
+for record <- batch.records do
+  IO.puts("seq=#{record.seq_num} #{record.body}")
+end
+# seq=0 {"type":"signup","user":"alice"}
+# seq=1 {"type":"login","user":"alice"}
+# seq=2 {"type":"signup","user":"bob"}
+```
+
+For high-throughput or long-lived workloads, use streaming sessions instead of single requests — see [Streaming Append](#streaming-append) and [Streaming Read](#streaming-read) below.
+
 ## Control Plane
 
 All control plane functions take an opts keyword list with `server: client` (and `basin: "name"` where required).
