@@ -65,7 +65,7 @@ All control plane functions take an opts keyword list with `server: client` (and
 
 Data plane operations use S2S-framed protobuf over a persistent Mint HTTP/2 connection. All calls return an updated `conn` for connection reuse.
 
-### Unary Operations
+### Single Request
 
 ```elixir
 {:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev")
