@@ -21,7 +21,7 @@ defmodule S2.StoreIntegrationTest do
     embedded_schema do
       field :user, :string
       field :text, :string
-      timestamps(inserted_at: :ts, updated_at: false, type: :utc_datetime)
+      field :ts, :utc_datetime
     end
 
     def new(attrs) do
