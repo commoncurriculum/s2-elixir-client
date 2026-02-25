@@ -87,7 +87,7 @@ defmodule S2.S2S.AppendSessionTest do
         records: [%S2.V1.AppendRecord{body: "should fail"}]
       }
 
-      assert {:error, :session_closed} = S2.S2S.AppendSession.append(session, input)
+      assert {:error, :session_closed, _session} = S2.S2S.AppendSession.append(session, input)
     end
   end
 

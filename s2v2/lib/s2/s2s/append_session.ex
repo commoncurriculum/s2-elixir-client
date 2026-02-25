@@ -21,7 +21,7 @@ defmodule S2.S2S.AppendSession do
   @typedoc "An open append session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :basin, :stream, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming append session.
@@ -46,7 +46,8 @@ defmodule S2.S2S.AppendSession do
           conn: conn,
           request_ref: request_ref,
           basin: basin,
-          stream: stream
+          stream: stream,
+          owner_pid: self()
         }
 
         wait_for_headers(session)
@@ -63,12 +64,13 @@ defmodule S2.S2S.AppendSession do
   The session is marked as closed on error and cannot be reused.
   """
   @spec append(t(), S2.V1.AppendInput.t()) ::
-          {:ok, S2.V1.AppendAck.t(), t()} | {:error, term()} | {:error, term(), t()}
-  def append(%__MODULE__{closed: true}, _input) do
-    {:error, :session_closed}
+          {:ok, S2.V1.AppendAck.t(), t()} | {:error, term(), t()}
+  def append(%__MODULE__{closed: true} = session, _input) do
+    {:error, :session_closed, session}
   end
 
   def append(%__MODULE__{} = session, %S2.V1.AppendInput{} = input) do
+    check_owner!(session)
     body = Shared.encode_framed(input)
 
     case Mint.HTTP2.stream_request_body(session.conn, session.request_ref, body) do
@@ -92,7 +94,8 @@ defmodule S2.S2S.AppendSession do
   def close(%__MODULE__{} = session) do
     case Mint.HTTP2.stream_request_body(session.conn, session.request_ref, :eof) do
       {:ok, conn} ->
-        {:ok, %{session | conn: conn, closed: true}}
+        session = %{session | conn: conn, closed: true}
+        drain_final_response(session)
 
       {:error, conn, reason} ->
         {:error, reason, close_session(session, conn)}
@@ -100,8 +103,8 @@ defmodule S2.S2S.AppendSession do
   end
 
   # Wait for the server to respond with 200 headers, establishing the session.
-  # Returns {:ok, session} or {:error, reason} on failure.
-  # Note: on error, the conn is embedded in the session struct for caller recovery.
+  # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
+  # can always recover the connection.
   defp wait_for_headers(session) do
     receive do
       message ->
@@ -111,7 +114,7 @@ defmodule S2.S2S.AppendSession do
 
             case check_session_status(responses, session.request_ref) do
               {:ok, 200} -> {:ok, session}
-              {:ok, status} -> {:error, {:unexpected_status, status}}
+              {:ok, status} -> {:error, {:unexpected_status, status}, session.conn}
               :continue -> wait_for_headers(session)
             end
 
@@ -122,7 +125,7 @@ defmodule S2.S2S.AppendSession do
             wait_for_headers(session)
         end
     after
-      @recv_timeout -> {:error, :timeout}
+      @recv_timeout -> {:error, :timeout, session.conn}
     end
   end
 
@@ -187,6 +190,41 @@ defmodule S2.S2S.AppendSession do
         end
     after
       @recv_timeout -> {:error, :timeout, close_session(session)}
+    end
+  end
+
+  # After sending EOF, drain the server's final response (status/headers/done)
+  # so the HTTP/2 stream is fully closed. Best-effort: if it times out or errors,
+  # we still return the closed session.
+  defp drain_final_response(session) do
+    receive do
+      message ->
+        case Mint.HTTP2.stream(session.conn, message) do
+          {:ok, conn, responses} ->
+            session = %{session | conn: conn}
+
+            if Shared.done?(responses) do
+              {:ok, session}
+            else
+              drain_final_response(session)
+            end
+
+          {:error, conn, _error, _responses} ->
+            {:ok, %{session | conn: conn}}
+
+          :unknown ->
+            drain_final_response(session)
+        end
+    after
+      @recv_timeout -> {:ok, session}
+    end
+  end
+
+  defp check_owner!(%__MODULE__{owner_pid: pid}) do
+    if pid != self() do
+      raise ArgumentError,
+        "AppendSession must be used from the process that created it " <>
+          "(owner: #{inspect(pid)}, caller: #{inspect(self())})"
     end
   end
 

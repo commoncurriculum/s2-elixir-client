@@ -14,14 +14,14 @@ defmodule S2.S2S.ReadSession do
   won't see the TCP data.
   """
 
-  alias S2.S2S.{Framing, Shared}
+  alias S2.S2S.Shared
 
   @recv_timeout 10_000
 
   @typedoc "An open read session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :owner_pid, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming read session.
@@ -44,7 +44,7 @@ defmodule S2.S2S.ReadSession do
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
-        session = %__MODULE__{conn: conn, request_ref: request_ref}
+        session = %__MODULE__{conn: conn, request_ref: request_ref, owner_pid: self()}
         wait_for_headers(session)
 
       {:error, conn, reason} ->
@@ -67,7 +67,9 @@ defmodule S2.S2S.ReadSession do
   end
 
   def next_batch(%__MODULE__{} = session) do
-    case try_decode_batch(session.data) do
+    check_owner!(session)
+
+    case Shared.decode_read_batch(session.data) do
       {:ok, batch, rest} ->
         {:ok, batch, %{session | data: rest}}
 
@@ -80,19 +82,26 @@ defmodule S2.S2S.ReadSession do
   end
 
   @doc """
-  Close the read session. After closing, `next_batch/1` will return
+  Close the read session. Sends an HTTP/2 stream cancel (RST_STREAM) to the
+  server so it stops sending data. After closing, `next_batch/1` will return
   `{:error, :session_closed, session}`.
   """
   @spec close(t()) :: {:ok, t()}
   def close(%__MODULE__{closed: true} = session), do: {:ok, session}
 
   def close(%__MODULE__{} = session) do
-    {:ok, %{session | closed: true}}
+    conn =
+      case Mint.HTTP2.cancel_request(session.conn, session.request_ref) do
+        {:ok, conn} -> conn
+        {:error, conn, _reason} -> conn
+      end
+
+    {:ok, %{session | conn: conn, closed: true}}
   end
 
   # Wait for the server to respond with 200 headers, establishing the session.
-  # Returns {:ok, session} or {:error, reason} on failure.
-  # Note: on error, the conn is embedded in the session struct for caller recovery.
+  # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
+  # can always recover the connection.
   defp wait_for_headers(session) do
     receive do
       message ->
@@ -106,7 +115,7 @@ defmodule S2.S2S.ReadSession do
                 {:ok, %{session | data: data}}
 
               status != nil ->
-                {:error, {:unexpected_status, status}}
+                {:error, {:unexpected_status, status}, session.conn}
 
               true ->
                 wait_for_headers(session)
@@ -119,7 +128,7 @@ defmodule S2.S2S.ReadSession do
             wait_for_headers(session)
         end
     after
-      @recv_timeout -> {:error, :timeout}
+      @recv_timeout -> {:error, :timeout, session.conn}
     end
   end
 
@@ -147,7 +156,7 @@ defmodule S2.S2S.ReadSession do
               :ok ->
                 done? = Shared.done?(responses)
 
-                case try_decode_batch(all_data) do
+                case Shared.decode_read_batch(all_data) do
                   {:ok, batch, rest} ->
                     {:ok, batch, %{session | data: rest}}
 
@@ -169,29 +178,15 @@ defmodule S2.S2S.ReadSession do
             receive_batch(session)
         end
     after
-      @recv_timeout -> {:error, :timeout, session}
+      @recv_timeout -> {:error, :timeout, close_session(session)}
     end
   end
 
-  defp try_decode_batch(data) do
-    case Framing.decode(data) do
-      {:ok, %{terminal: false, body: body}, rest} ->
-        case Protox.decode(body, S2.V1.ReadBatch) do
-          {:ok, %{records: []} = _heartbeat} ->
-            try_decode_batch(rest)
-
-          {:ok, batch} ->
-            {:ok, batch, rest}
-
-          {:error, reason} ->
-            {:error, {:decode_error, reason}}
-        end
-
-      {:ok, %{terminal: true, body: body}, _rest} ->
-        {:error, Shared.parse_terminal_error(body)}
-
-      :incomplete ->
-        :incomplete
+  defp check_owner!(%__MODULE__{owner_pid: pid}) do
+    if pid != self() do
+      raise ArgumentError,
+        "ReadSession must be used from the process that created it " <>
+          "(owner: #{inspect(pid)}, caller: #{inspect(self())})"
     end
   end
 

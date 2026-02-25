@@ -46,7 +46,7 @@ defmodule S2.Client do
         handle_response(status, resp_body, response_specs)
 
       {:error, exception} ->
-        {:error, %S2.Error{status: 0, message: Exception.message(exception)}}
+        {:error, %S2.Error{status: nil, message: Exception.message(exception)}}
     end
   end
 
@@ -79,6 +79,7 @@ defmodule S2.Client do
     struct(schema_mod, attrs)
   end
 
+  defp decode_schema(nil, _schema_mod), do: nil
   defp decode_schema(body, _schema_mod), do: body
 
   defp decode_field(nil, _type), do: nil
@@ -95,6 +96,7 @@ defmodule S2.Client do
     Enum.find_value(variants, value, fn
       :null -> if is_nil(value), do: nil
       {schema_mod, :t} when is_atom(schema_mod) and is_map(value) -> decode_schema(value, schema_mod)
+      {:const, const_value} -> if value == const_value, do: value
       _ -> nil
     end)
   end

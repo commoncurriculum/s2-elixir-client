@@ -139,6 +139,62 @@ defmodule S2.S2S.SharedTest do
     end
   end
 
+  describe "parse_http_error/2 with partial JSON" do
+    test "handles JSON with message but no code" do
+      data = Jason.encode!(%{"message" => "something broke"})
+      error = Shared.parse_http_error(500, data)
+
+      assert %S2.Error{} = error
+      assert error.status == 500
+      assert error.message == "something broke"
+      assert error.code == nil
+    end
+
+    test "handles JSON object with neither code nor message" do
+      data = Jason.encode!(%{"foo" => "bar"})
+      error = Shared.parse_http_error(500, data)
+
+      assert %S2.Error{} = error
+      assert error.status == 500
+      assert error.message =~ "foo"
+    end
+  end
+
+  describe "decode_read_batch/1" do
+    test "decodes a framed ReadBatch" do
+      batch = %S2.V1.ReadBatch{
+        records: [%S2.V1.SequencedRecord{seq_num: 0, body: "hello"}]
+      }
+
+      {iodata, _size} = Protox.encode!(batch)
+      frame = S2.S2S.Framing.encode(IO.iodata_to_binary(iodata))
+
+      assert {:ok, decoded, <<>>} = Shared.decode_read_batch(frame)
+      assert length(decoded.records) == 1
+      assert hd(decoded.records).body == "hello"
+    end
+
+    test "skips heartbeat frames" do
+      heartbeat = %S2.V1.ReadBatch{records: []}
+      {hb_io, _} = Protox.encode!(heartbeat)
+      hb_frame = S2.S2S.Framing.encode(IO.iodata_to_binary(hb_io))
+
+      real = %S2.V1.ReadBatch{
+        records: [%S2.V1.SequencedRecord{seq_num: 0, body: "real"}]
+      }
+
+      {real_io, _} = Protox.encode!(real)
+      real_frame = S2.S2S.Framing.encode(IO.iodata_to_binary(real_io))
+
+      assert {:ok, decoded, <<>>} = Shared.decode_read_batch(hb_frame <> real_frame)
+      assert hd(decoded.records).body == "real"
+    end
+
+    test "returns :incomplete for partial data" do
+      assert :incomplete = Shared.decode_read_batch(<<0, 0>>)
+    end
+  end
+
   describe "check_buffer_size/1" do
     test "returns :ok for small buffers" do
       assert :ok = Shared.check_buffer_size(<<0::8>>)

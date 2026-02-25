@@ -90,6 +90,12 @@ defmodule S2.S2S.Shared do
       {:ok, %{"code" => code, "message" => message}} ->
         %S2.Error{status: status, code: code, message: message}
 
+      {:ok, %{"message" => message}} ->
+        %S2.Error{status: status, message: message}
+
+      {:ok, decoded} when is_map(decoded) ->
+        %S2.Error{status: status, message: inspect(decoded)}
+
       _ ->
         %S2.Error{status: status, message: data}
     end
@@ -141,6 +147,36 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
+  Decode a ReadBatch from S2S-framed data, automatically skipping heartbeat
+  frames (empty ReadBatch with no records).
+
+  Returns `{:ok, batch, rest}`, `{:error, reason}`, or `:incomplete`.
+  """
+  @spec decode_read_batch(binary()) ::
+          {:ok, S2.V1.ReadBatch.t(), binary()} | {:error, term()} | :incomplete
+  def decode_read_batch(data) do
+    case Framing.decode(data) do
+      {:ok, %{terminal: false, body: body}, rest} ->
+        case Protox.decode(body, S2.V1.ReadBatch) do
+          {:ok, %{records: []} = _heartbeat} ->
+            decode_read_batch(rest)
+
+          {:ok, batch} ->
+            {:ok, batch, rest}
+
+          {:error, reason} ->
+            {:error, {:decode_error, reason}}
+        end
+
+      {:ok, %{terminal: true, body: body}, _rest} ->
+        {:error, parse_terminal_error(body)}
+
+      :incomplete ->
+        :incomplete
+    end
+  end
+
+  @doc """
   Build a query string from keyword opts, filtering to known read parameters.
   Values are URL-encoded to prevent parameter injection.
   """
@@ -158,7 +194,8 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
-  Encode a protobuf struct into an S2S-framed binary.
+  Encode a Protox-compatible struct (e.g. `S2.V1.AppendInput`) into an
+  S2S-framed binary. Raises on encoding failure.
   """
   @spec encode_framed(struct()) :: binary()
   def encode_framed(proto_struct) do

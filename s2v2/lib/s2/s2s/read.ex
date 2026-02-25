@@ -7,7 +7,7 @@ defmodule S2.S2S.Read do
   ReadBatch) are skipped automatically.
   """
 
-  alias S2.S2S.{Framing, Shared}
+  alias S2.S2S.Shared
 
   @recv_timeout 5_000
 
@@ -47,7 +47,7 @@ defmodule S2.S2S.Read do
                 receive_first_batch(conn, request_ref, acc)
 
               acc[:status] == 200 ->
-                case try_decode_batch(acc.data) do
+                case Shared.decode_read_batch(acc.data) do
                   {:ok, batch, _rest} -> {:ok, batch, conn}
                   :incomplete -> receive_first_batch(conn, request_ref, acc)
                   {:error, reason} -> {:error, reason, conn}
@@ -68,30 +68,8 @@ defmodule S2.S2S.Read do
     end
   end
 
-  defp try_decode_batch(data) do
-    case Framing.decode(data) do
-      {:ok, %{terminal: false, body: body}, rest} ->
-        case Protox.decode(body, S2.V1.ReadBatch) do
-          {:ok, %{records: []} = _heartbeat} ->
-            try_decode_batch(rest)
-
-          {:ok, batch} ->
-            {:ok, batch, rest}
-
-          {:error, reason} ->
-            {:error, {:decode_error, reason}}
-        end
-
-      {:ok, %{terminal: true, body: body}, _rest} ->
-        {:error, Shared.parse_terminal_error(body)}
-
-      :incomplete ->
-        :incomplete
-    end
-  end
-
   defp handle_complete_response(%{status: 200, data: data}, conn) do
-    case try_decode_batch(data) do
+    case Shared.decode_read_batch(data) do
       {:ok, batch, _rest} -> {:ok, batch, conn}
       {:error, reason} -> {:error, reason, conn}
       :incomplete -> {:error, :incomplete_frame, conn}

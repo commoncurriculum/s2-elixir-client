@@ -58,7 +58,7 @@ defmodule S2.S2S.CheckTail do
         {:ok, position, conn}
 
       {:ok, body} ->
-        {:error, {:decode_error, {:unexpected_tail_response, body}}, conn}
+        {:error, {:decode_error, {:unexpected_tail_response, inspect(body)}}, conn}
 
       {:error, reason} ->
         {:error, {:decode_error, reason}, conn}

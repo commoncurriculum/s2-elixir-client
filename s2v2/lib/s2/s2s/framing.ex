@@ -3,6 +3,8 @@ defmodule S2.S2S.Framing do
 
   @terminal_bit 0x80
   @compression_mask 0x60
+  # Note: the 24-bit length prefix naturally caps frames at ~16 MiB (0xFFFFFF bytes).
+  # No additional length validation is needed.
 
   def encode(body, opts \\ []) do
     terminal = Keyword.get(opts, :terminal, false)
