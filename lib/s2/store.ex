@@ -26,6 +26,9 @@ defmodule S2.Store do
 
       MyApp.S2.append("my-stream", %{event: "click"})
       MyApp.S2.listen("my-stream", fn msg -> IO.inspect(msg) end)
+
+  Each stream gets its own process with a persistent HTTP/2 connection
+  and open `AppendSession`. Workers are started lazily on first use.
   """
 
   defmacro __using__(opts) do
@@ -43,7 +46,17 @@ defmodule S2.Store do
       end
 
       def start_link(_opts \\ []) do
-        S2.Store.Server.start_link(__MODULE__, @otp_app)
+        app_config = Application.get_env(@otp_app, __MODULE__, [])
+
+        config = %{
+          store: __MODULE__,
+          basin: @basin,
+          serializer: @serializer,
+          base_url: Keyword.get(app_config, :base_url, "http://localhost:4243"),
+          token: Keyword.get(app_config, :token)
+        }
+
+        S2.Store.Supervisor.start_link(config)
       end
 
       def config do
@@ -51,19 +64,20 @@ defmodule S2.Store do
       end
 
       def append(stream, message, serializer \\ @serializer) do
-        GenServer.call(__MODULE__, {:append, stream, message, serializer})
+        S2.Store.Supervisor.ensure_worker(__MODULE__, stream)
+        S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer)
       end
 
       def create_stream(stream) do
-        GenServer.call(__MODULE__, {:create_stream, stream})
+        S2.Store.Supervisor.create_stream(__MODULE__, stream)
       end
 
       def delete_stream(stream) do
-        GenServer.call(__MODULE__, {:delete_stream, stream})
+        S2.Store.Supervisor.delete_stream(__MODULE__, stream)
       end
 
       def listen(stream, callback, opts \\ []) do
-        S2.Store.Server.listen(__MODULE__, stream, callback, opts)
+        S2.Store.Supervisor.listen(__MODULE__, stream, callback, opts)
       end
 
       # Allow `use MyApp.S2, serializer: ...` in downstream modules
@@ -101,64 +115,92 @@ defmodule S2.Store do
   end
 end
 
-defmodule S2.Store.Server do
+defmodule S2.Store.Supervisor do
   @moduledoc false
-  use GenServer
+  use Supervisor
 
-  alias S2.Patterns.Serialization
-
-  def start_link(store_mod, otp_app) do
-    GenServer.start_link(__MODULE__, {store_mod, otp_app}, name: store_mod)
+  def start_link(config) do
+    Supervisor.start_link(__MODULE__, config, name: config.store)
   end
 
-  def listen(store_mod, stream, callback, opts) do
-    config = GenServer.call(store_mod, :get_config)
+  @impl true
+  def init(config) do
+    # Store config in a persistent term so workers and callers can access it
+    :persistent_term.put({__MODULE__, config.store}, config)
+
+    children = [
+      {Registry, keys: :unique, name: registry_name(config.store)},
+      {DynamicSupervisor, name: dynamic_sup_name(config.store), strategy: :one_for_one},
+      {S2.Store.ControlPlane, config}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_all)
+  end
+
+  def get_config(store) do
+    :persistent_term.get({__MODULE__, store})
+  end
+
+  def stream_worker_name(store, stream) do
+    {:via, Registry, {registry_name(store), stream}}
+  end
+
+  def ensure_worker(store, stream) do
+    name = stream_worker_name(store, stream)
+
+    case GenServer.whereis(name) do
+      nil -> start_worker(store, stream)
+      pid when is_pid(pid) -> {:ok, pid}
+    end
+  end
+
+  def create_stream(store, stream) do
+    GenServer.call(control_plane_name(store), {:create_stream, stream})
+  end
+
+  def delete_stream(store, stream) do
+    GenServer.call(control_plane_name(store), {:delete_stream, stream})
+  end
+
+  def listen(store, stream, callback, opts) do
+    config = get_config(store)
     seq_num = Keyword.get(opts, :from, 0)
     serializer = Keyword.get(opts, :serializer, config.serializer)
 
     Task.start(fn ->
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
       {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num)
-      tail_loop(session, serializer, callback)
+      S2.Store.StreamWorker.tail_loop(session, serializer, callback)
     end)
   end
 
-  @impl true
-  def init({store_mod, otp_app}) do
-    store_config = store_mod.config()
-    app_config = Application.get_env(otp_app, store_mod, [])
+  defp start_worker(store, stream) do
+    config = get_config(store)
+    spec = {S2.Store.StreamWorker, {config, stream}}
+    DynamicSupervisor.start_child(dynamic_sup_name(store), spec)
+  end
 
-    base_url = Keyword.get(app_config, :base_url, "http://localhost:4243")
-    token = Keyword.get(app_config, :token)
+  defp dynamic_sup_name(store), do: Module.concat(store, DynamicSupervisor)
+  defp control_plane_name(store), do: Module.concat(store, ControlPlane)
+  defp registry_name(store), do: Module.concat(store, Registry)
+end
 
-    config = S2.Config.new(base_url: base_url, token: token)
-    client = S2.Client.new(config)
-    {:ok, conn} = S2.S2S.Connection.open(base_url, token: token)
+defmodule S2.Store.ControlPlane do
+  @moduledoc false
+  use GenServer
 
-    {:ok, %{
-      client: client,
-      conn: conn,
-      base_url: base_url,
-      token: token,
-      basin: store_config.basin,
-      serializer: store_config.serializer,
-      writer: Serialization.writer()
-    }}
+  def start_link(config) do
+    GenServer.start_link(__MODULE__, config, name: Module.concat(config.store, ControlPlane))
   end
 
   @impl true
-  def handle_call({:append, stream, message, serializer}, _from, state) do
-    {input, writer} = Serialization.prepare(state.writer, message, serializer)
-
-    case S2.S2S.Append.call(state.conn, state.basin, stream, input) do
-      {:ok, ack, conn} ->
-        {:reply, {:ok, ack}, %{state | conn: conn, writer: writer}}
-
-      {:error, reason, conn} ->
-        {:reply, {:error, reason}, %{state | conn: conn, writer: writer}}
-    end
+  def init(config) do
+    s2_config = S2.Config.new(base_url: config.base_url, token: config.token)
+    client = S2.Client.new(s2_config)
+    {:ok, %{client: client, basin: config.basin}}
   end
 
+  @impl true
   def handle_call({:create_stream, stream}, _from, state) do
     result = S2.Streams.create_stream(
       %S2.CreateStreamRequest{stream: stream},
@@ -171,17 +213,51 @@ defmodule S2.Store.Server do
     result = S2.Streams.delete_stream(stream, server: state.client, basin: state.basin)
     {:reply, result, state}
   end
+end
 
-  def handle_call(:get_config, _from, state) do
-    {:reply, %{
-      base_url: state.base_url,
-      token: state.token,
-      basin: state.basin,
-      serializer: state.serializer
-    }, state}
+defmodule S2.Store.StreamWorker do
+  @moduledoc false
+  use GenServer
+
+  alias S2.Patterns.Serialization
+
+  def start_link({config, stream}) do
+    name = S2.Store.Supervisor.stream_worker_name(config.store, stream)
+    GenServer.start_link(__MODULE__, {config, stream}, name: name)
   end
 
-  defp tail_loop(session, serializer, callback, reader \\ Serialization.reader()) do
+  def append(store, stream, message, serializer) do
+    name = S2.Store.Supervisor.stream_worker_name(store, stream)
+    GenServer.call(name, {:append, message, serializer})
+  end
+
+  @impl true
+  def init({config, stream}) do
+    {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
+    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream)
+
+    {:ok, %{
+      config: config,
+      stream: stream,
+      session: session,
+      writer: Serialization.writer()
+    }}
+  end
+
+  @impl true
+  def handle_call({:append, message, serializer}, _from, state) do
+    {input, writer} = Serialization.prepare(state.writer, message, serializer)
+
+    case S2.S2S.AppendSession.append(state.session, input) do
+      {:ok, ack, session} ->
+        {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
+
+      {:error, reason, session} ->
+        {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+    end
+  end
+
+  def tail_loop(session, serializer, callback, reader \\ Serialization.reader()) do
     case S2.S2S.ReadSession.next_batch(session) do
       {:ok, batch, session} ->
         {messages, reader} = Serialization.decode(reader, batch.records, serializer)

@@ -93,4 +93,39 @@ defmodule S2.StoreTest do
       assert function_exported?(DefaultStream, :append, 2)
     end
   end
+
+  describe "supervisor and stream workers" do
+    defmodule WorkerStore do
+      use S2.Store,
+        otp_app: :s2,
+        basin: "worker-basin"
+    end
+
+    test "start_link starts a supervisor" do
+      # Workers are started lazily, so the supervisor starts even without a server.
+      # start_link may fail if Connection.open fails (no server running),
+      # but the Supervisor itself is what we're testing.
+      result = WorkerStore.start_link()
+
+      case result do
+        {:ok, pid} ->
+          assert Process.alive?(pid)
+          Supervisor.stop(pid)
+
+        {:error, _reason} ->
+          # Expected when no S2 server is running — ControlPlane init doesn't
+          # connect, so this should succeed. If it fails, something else is wrong.
+          flunk("start_link should succeed — workers connect lazily, supervisor should start")
+      end
+    end
+
+    test "stream_worker_name generates consistent names per stream" do
+      name1 = S2.Store.Supervisor.stream_worker_name(WorkerStore, "chat/general")
+      name2 = S2.Store.Supervisor.stream_worker_name(WorkerStore, "chat/general")
+      name3 = S2.Store.Supervisor.stream_worker_name(WorkerStore, "chat/random")
+
+      assert name1 == name2
+      assert name1 != name3
+    end
+  end
 end

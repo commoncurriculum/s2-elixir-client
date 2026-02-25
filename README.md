@@ -253,10 +253,35 @@ reader = Serialization.reader()
 
 ## Architecture
 
+### How `S2.Store` works
+
+When you call `MyApp.S2.append("chat/general", message)`, here's what happens:
+
+```
+MyApp.S2 (Supervisor)
+├── Registry          — maps stream names to worker pids
+├── DynamicSupervisor — owns stream workers
+│   ├── StreamWorker("chat/general")  — own connection + open AppendSession
+│   ├── StreamWorker("chat/random")   — own connection + open AppendSession
+│   └── ...started lazily on first append
+├── ControlPlane      — shared JSON client for create/delete stream
+└── listener Tasks    — each spawned with own connection + ReadSession
+```
+
+- **One process per stream.** Each stream gets its own `StreamWorker` GenServer with a dedicated Mint HTTP/2 connection and a persistent `AppendSession`. Appends to different streams run in parallel.
+- **Workers start lazily.** The first `append("chat/general", ...)` starts a worker for that stream. Subsequent appends reuse the open session — no handshake overhead.
+- **Listeners are independent.** Each `listen` call spawns a Task with its own connection and `ReadSession`, tailing the stream and calling your callback as messages arrive. This is required because Mint delivers TCP data to the owning process's mailbox.
+- **Control plane is shared.** `create_stream` and `delete_stream` go through a single `ControlPlane` GenServer using the JSON/Req client. These are infrequent operations that don't need per-stream isolation.
+
+### Protocol layers
+
 | Layer | Transport | Encoding | Library |
 |-------|-----------|----------|---------|
+| `S2.Store` | Managed | Managed | — |
 | Control plane (basins, streams, tokens, metrics) | HTTP/1.1 or 2 | JSON | Req |
 | Data plane (append, read, check tail) | HTTP/2 | S2S-framed Protobuf | Mint |
+
+`S2.Store` is the recommended way to use the SDK. The control and data plane modules below it are available if you need lower-level access.
 
 ## License
 
