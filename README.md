@@ -37,19 +37,32 @@ config :my_app, :s2,
 ```elixir
 # lib/my_app/chat/message.ex
 defmodule MyApp.Chat.Message do
+  use Ecto.Schema
+  import Ecto.Changeset
+
   @derive Jason.Encoder
-  defstruct [:user, :text, :ts]
+  @primary_key false
+  embedded_schema do
+    field :user, :string
+    field :text, :string
+    field :ts, :string
+  end
 
   def new(user, text) do
     %__MODULE__{user: user, text: text, ts: DateTime.utc_now() |> DateTime.to_iso8601()}
+  end
+
+  def changeset(message \\ %__MODULE__{}, attrs) do
+    message
+    |> cast(attrs, [:user, :text, :ts])
+    |> validate_required([:user, :text])
   end
 
   def serializer do
     %{
       serialize: &Jason.encode!/1,
       deserialize: fn json ->
-        map = Jason.decode!(json)
-        %__MODULE__{user: map["user"], text: map["text"], ts: map["ts"]}
+        json |> Jason.decode!() |> then(&changeset/1) |> apply_action!(:decode)
       end
     }
   end
