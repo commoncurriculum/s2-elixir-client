@@ -74,7 +74,7 @@ defmodule S2.S2S.FramingTest do
     test "decodes unknown compression bits gracefully" do
       # 0x60 = both compression bits set (undefined)
       frame = <<5::24-big, 0x60, "data">>
-      assert {:ok, %{compression: {:unknown, 0x60}}, <<>>} = Framing.decode(frame)
+      assert {:ok, %{compression: :unknown}, <<>>} = Framing.decode(frame)
     end
 
     test "decodes multiple concatenated frames" do

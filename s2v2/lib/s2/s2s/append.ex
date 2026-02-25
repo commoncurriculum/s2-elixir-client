@@ -5,9 +5,12 @@ defmodule S2.S2S.Append do
 
   alias S2.S2S.Shared
 
+  @spec call(Mint.HTTP2.t(), String.t(), String.t(), S2.V1.AppendInput.t()) ::
+          {:ok, S2.V1.AppendAck.t(), Mint.HTTP2.t()}
+          | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, %S2.V1.AppendInput{} = input) do
     body = Shared.encode_framed(input)
-    path = "/v1/streams/#{stream}/records"
+    path = "/v1/streams/#{URI.encode(stream)}/records"
 
     headers = [
       {"content-type", "s2s/proto"},

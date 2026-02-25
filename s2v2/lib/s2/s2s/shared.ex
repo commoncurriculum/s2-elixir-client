@@ -3,7 +3,13 @@ defmodule S2.S2S.Shared do
 
   alias S2.S2S.Framing
 
+  @type conn :: Mint.HTTP2.t()
+
   @default_timeout 5_000
+
+  # Maximum bytes to buffer before rejecting a frame as too large.
+  # Protects against OOM from a misbehaving server (16 MiB).
+  @max_buffer_size 16 * 1024 * 1024
 
   @doc """
   Receive a complete unary HTTP/2 response (status + headers + data + done).
@@ -11,6 +17,8 @@ defmodule S2.S2S.Shared do
   Accumulates all response parts and returns `{:ok, %{status: ..., data: ...}, conn}`
   once the stream is done.
   """
+  @spec receive_complete(conn, reference(), keyword()) ::
+          {:ok, map(), conn} | {:error, atom(), conn}
   def receive_complete(conn, request_ref, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     do_receive_complete(conn, request_ref, %{status: nil, data: <<>>}, timeout)
@@ -43,6 +51,7 @@ defmodule S2.S2S.Shared do
   @doc """
   Extract data frames from a list of Mint responses.
   """
+  @spec extract_data([term()], reference()) :: binary()
   def extract_data(responses, request_ref) do
     Enum.reduce(responses, <<>>, fn
       {:data, ^request_ref, data}, acc -> acc <> data
@@ -51,8 +60,17 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
+  Check whether any response is a `:done` signal.
+  """
+  @spec done?([term()]) :: boolean()
+  def done?(responses) do
+    Enum.any?(responses, &match?({:done, _}, &1))
+  end
+
+  @doc """
   Process Mint responses into an accumulator map with :status, :data, :done keys.
   """
+  @spec process_responses([term()], reference(), map()) :: map()
   def process_responses(responses, request_ref, acc) do
     Enum.reduce(responses, acc, fn
       {:status, ^request_ref, status}, acc -> Map.put(acc, :status, status)
@@ -66,6 +84,7 @@ defmodule S2.S2S.Shared do
   @doc """
   Parse a non-200 HTTP response body into an `%S2.Error{}`.
   """
+  @spec parse_http_error(integer(), binary()) :: S2.Error.t()
   def parse_http_error(status, data) when is_binary(data) do
     case Jason.decode(data) do
       {:ok, %{"code" => code, "message" => message}} ->
@@ -82,6 +101,7 @@ defmodule S2.S2S.Shared do
   Terminal frames contain a 2-byte big-endian status code followed by JSON error info.
   Returns a safe error if the body is too short to contain a status code.
   """
+  @spec parse_terminal_error(binary()) :: S2.Error.t()
   def parse_terminal_error(<<status_code::16-big, json_rest::binary>>) do
     case Jason.decode(json_rest) do
       {:ok, %{"code" => code, "message" => message}} ->
@@ -102,6 +122,8 @@ defmodule S2.S2S.Shared do
   Returns `{:ok, decoded, rest}` on success, `{:error, reason}` on terminal/decode error,
   or `:incomplete` if more data is needed.
   """
+  @spec decode_frame(binary(), module()) ::
+          {:ok, struct(), binary()} | {:error, term()} | :incomplete
   def decode_frame(data, proto_module) do
     case Framing.decode(data) do
       {:ok, %{terminal: false, body: body}, rest} ->
@@ -120,25 +142,36 @@ defmodule S2.S2S.Shared do
 
   @doc """
   Build a query string from keyword opts, filtering to known read parameters.
+  Values are URL-encoded to prevent parameter injection.
   """
+  @spec build_read_query(keyword()) :: String.t()
   def build_read_query(opts) do
     params =
       opts
       |> Keyword.take([:seq_num, :count, :wait, :until, :clamp, :tail_offset])
-      |> Enum.map(fn {k, v} -> "#{k}=#{v}" end)
+      |> Enum.map(fn {k, v} -> {Atom.to_string(k), to_string(v)} end)
 
     case params do
       [] -> ""
-      _ -> "?" <> Enum.join(params, "&")
+      _ -> "?" <> URI.encode_query(params)
     end
   end
 
   @doc """
   Encode a protobuf struct into an S2S-framed binary.
   """
+  @spec encode_framed(struct()) :: binary()
   def encode_framed(proto_struct) do
     {iodata, _size} = Protox.encode!(proto_struct)
     proto_bytes = IO.iodata_to_binary(iodata)
     Framing.encode(proto_bytes)
   end
+
+  @doc """
+  Check if accumulated buffer exceeds the safety limit.
+  Returns `:ok` or `{:error, :buffer_overflow}`.
+  """
+  @spec check_buffer_size(binary()) :: :ok | {:error, :buffer_overflow}
+  def check_buffer_size(data) when byte_size(data) > @max_buffer_size, do: {:error, :buffer_overflow}
+  def check_buffer_size(_data), do: :ok
 end

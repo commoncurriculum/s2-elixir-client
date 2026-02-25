@@ -6,13 +6,20 @@ defmodule S2.S2S.ReadSession do
   Call `next_batch/1` repeatedly to receive `ReadBatch` messages. Heartbeat frames
   (empty ReadBatch) are skipped automatically.
 
-  Sessions are NOT safe to share across processes — the underlying Mint connection
-  delivers messages to the owning process's mailbox.
+  ## Process affinity
+
+  Sessions are NOT safe to share across processes. The underlying Mint connection
+  delivers TCP messages to the owning process's mailbox. Creating a session in one
+  process and calling `next_batch/1` from another will not work — the receiving process
+  won't see the TCP data.
   """
 
   alias S2.S2S.{Framing, Shared}
 
   @recv_timeout 10_000
+
+  @typedoc "An open read session."
+  @type t :: %__MODULE__{}
 
   defstruct [:conn, :request_ref, closed: false, data: <<>>]
 
@@ -21,10 +28,14 @@ defmodule S2.S2S.ReadSession do
 
   Accepts the same query opts as unary read: `:seq_num`, `:count`, `:wait`, etc.
   Returns `{:ok, session}` on success or `{:error, reason}` on failure.
+  On `Mint.HTTP2.request/5` failure, returns `{:error, reason, conn}` so the
+  caller can still manage the connection.
   """
+  @spec open(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
+          {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
     query = Shared.build_read_query(opts)
-    path = "/v1/streams/#{stream}/records" <> query
+    path = "/v1/streams/#{URI.encode(stream)}/records" <> query
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -47,8 +58,10 @@ defmodule S2.S2S.ReadSession do
   Returns:
   - `{:ok, %ReadBatch{}, session}` — a batch with records
   - `{:error, :end_of_stream, session}` — server closed the stream normally
-  - `{:error, reason, session}` — an error occurred
+  - `{:error, :session_closed, session}` — session was already closed
+  - `{:error, reason, session}` — an error occurred; session is marked closed
   """
+  @spec next_batch(t()) :: {:ok, S2.V1.ReadBatch.t(), t()} | {:error, term(), t()}
   def next_batch(%__MODULE__{closed: true} = session) do
     {:error, :session_closed, session}
   end
@@ -67,14 +80,19 @@ defmodule S2.S2S.ReadSession do
   end
 
   @doc """
-  Close the read session. After closing, `next_batch/1` will return `{:error, :session_closed}`.
+  Close the read session. After closing, `next_batch/1` will return
+  `{:error, :session_closed, session}`.
   """
+  @spec close(t()) :: {:ok, t()}
   def close(%__MODULE__{closed: true} = session), do: {:ok, session}
 
   def close(%__MODULE__{} = session) do
     {:ok, %{session | closed: true}}
   end
 
+  # Wait for the server to respond with 200 headers, establishing the session.
+  # Returns {:ok, session} or {:error, reason} on failure.
+  # Note: on error, the conn is embedded in the session struct for caller recovery.
   defp wait_for_headers(session) do
     receive do
       message ->
@@ -94,8 +112,8 @@ defmodule S2.S2S.ReadSession do
                 wait_for_headers(session)
             end
 
-          {:error, _conn, _error, _responses} ->
-            {:error, :stream_error}
+          {:error, conn, _error, _responses} ->
+            {:error, :stream_error, conn}
 
           :unknown ->
             wait_for_headers(session)
@@ -122,21 +140,26 @@ defmodule S2.S2S.ReadSession do
             new_data = Shared.extract_data(responses, session.request_ref)
             all_data = session.data <> new_data
 
-            # Check if server closed the stream
-            done? = Enum.any?(responses, &match?({:done, _}, &1))
+            case Shared.check_buffer_size(all_data) do
+              {:error, :buffer_overflow} ->
+                {:error, :buffer_overflow, close_session(session)}
 
-            case try_decode_batch(all_data) do
-              {:ok, batch, rest} ->
-                {:ok, batch, %{session | data: rest}}
+              :ok ->
+                done? = Shared.done?(responses)
 
-              :incomplete when done? ->
-                {:error, :end_of_stream, close_session(session)}
+                case try_decode_batch(all_data) do
+                  {:ok, batch, rest} ->
+                    {:ok, batch, %{session | data: rest}}
 
-              :incomplete ->
-                receive_batch(%{session | data: all_data})
+                  :incomplete when done? ->
+                    {:error, :end_of_stream, close_session(session)}
 
-              {:error, reason} ->
-                {:error, reason, close_session(session)}
+                  :incomplete ->
+                    receive_batch(%{session | data: all_data})
+
+                  {:error, reason} ->
+                    {:error, reason, close_session(session)}
+                end
             end
 
           {:error, conn, _error, _responses} ->

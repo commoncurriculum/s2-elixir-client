@@ -88,6 +88,13 @@ defmodule S2.S2S.SharedTest do
     test "ignores unknown params" do
       assert Shared.build_read_query(foo: "bar") == ""
     end
+
+    test "URL-encodes parameter values to prevent injection" do
+      query = Shared.build_read_query(seq_num: "0&evil=1")
+      # The & should be encoded, not treated as a parameter separator
+      refute query =~ "&evil"
+      assert query =~ "seq_num=0%26evil%3D1"
+    end
   end
 
   describe "encode_framed/1" do
@@ -129,6 +136,39 @@ defmodule S2.S2S.SharedTest do
 
       assert {:error, %S2.Error{status: 400, code: "err"}} =
                Shared.decode_frame(frame, S2.V1.AppendInput)
+    end
+  end
+
+  describe "check_buffer_size/1" do
+    test "returns :ok for small buffers" do
+      assert :ok = Shared.check_buffer_size(<<0::8>>)
+      assert :ok = Shared.check_buffer_size(:crypto.strong_rand_bytes(1000))
+    end
+
+    test "returns :ok for empty buffer" do
+      assert :ok = Shared.check_buffer_size(<<>>)
+    end
+
+    test "returns error for oversized buffer" do
+      # Create a binary just over the 16MiB limit
+      big = :binary.copy(<<0>>, 16 * 1024 * 1024 + 1)
+      assert {:error, :buffer_overflow} = Shared.check_buffer_size(big)
+    end
+  end
+
+  describe "done?/1" do
+    test "returns true when :done is present" do
+      ref = make_ref()
+      assert Shared.done?([{:data, ref, "hi"}, {:done, ref}])
+    end
+
+    test "returns false when :done is absent" do
+      ref = make_ref()
+      refute Shared.done?([{:data, ref, "hi"}])
+    end
+
+    test "returns false for empty list" do
+      refute Shared.done?([])
     end
   end
 end

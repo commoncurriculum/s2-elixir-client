@@ -11,9 +11,12 @@ defmodule S2.S2S.Read do
 
   @recv_timeout 5_000
 
+  @spec call(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
+          {:ok, S2.V1.ReadBatch.t(), Mint.HTTP2.t()}
+          | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, opts \\ []) do
     query = Shared.build_read_query(opts)
-    path = "/v1/streams/#{stream}/records" <> query
+    path = "/v1/streams/#{URI.encode(stream)}/records" <> query
 
     headers = [
       {"content-type", "s2s/proto"},

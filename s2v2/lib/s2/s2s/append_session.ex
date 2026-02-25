@@ -6,13 +6,20 @@ defmodule S2.S2S.AppendSession do
   Supports multiple sequential `append/2` calls on the same session, each sending a framed
   `AppendInput` and receiving a framed `AppendAck`.
 
-  Sessions are NOT safe to share across processes — the underlying Mint connection
-  delivers messages to the owning process's mailbox.
+  ## Process affinity
+
+  Sessions are NOT safe to share across processes. The underlying Mint connection
+  delivers TCP messages to the owning process's mailbox. Creating a session in one
+  process and calling `append/2` from another will not work — the receiving process
+  won't see the TCP data.
   """
 
   alias S2.S2S.Shared
 
   @recv_timeout 5_000
+
+  @typedoc "An open append session."
+  @type t :: %__MODULE__{}
 
   defstruct [:conn, :request_ref, :basin, :stream, closed: false, data: <<>>]
 
@@ -20,9 +27,13 @@ defmodule S2.S2S.AppendSession do
   Open a new streaming append session.
 
   Returns `{:ok, session}` on success or `{:error, reason}` on failure.
+  On `Mint.HTTP2.request/5` failure, returns `{:error, reason, conn}` so the
+  caller can still manage the connection.
   """
+  @spec open(Mint.HTTP2.t(), String.t(), String.t()) ::
+          {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream) do
-    path = "/v1/streams/#{stream}/records"
+    path = "/v1/streams/#{URI.encode(stream)}/records"
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -51,6 +62,8 @@ defmodule S2.S2S.AppendSession do
   Returns `{:ok, ack, session}` on success or `{:error, reason, session}` on failure.
   The session is marked as closed on error and cannot be reused.
   """
+  @spec append(t(), S2.V1.AppendInput.t()) ::
+          {:ok, S2.V1.AppendAck.t(), t()} | {:error, term()} | {:error, term(), t()}
   def append(%__MODULE__{closed: true}, _input) do
     {:error, :session_closed}
   end
@@ -73,6 +86,7 @@ defmodule S2.S2S.AppendSession do
 
   Returns `{:ok, session}` or `{:error, reason, session}`.
   """
+  @spec close(t()) :: {:ok, t()} | {:error, term(), t()}
   def close(%__MODULE__{closed: true} = session), do: {:ok, session}
 
   def close(%__MODULE__{} = session) do
@@ -85,6 +99,9 @@ defmodule S2.S2S.AppendSession do
     end
   end
 
+  # Wait for the server to respond with 200 headers, establishing the session.
+  # Returns {:ok, session} or {:error, reason} on failure.
+  # Note: on error, the conn is embedded in the session struct for caller recovery.
   defp wait_for_headers(session) do
     receive do
       message ->
@@ -98,8 +115,8 @@ defmodule S2.S2S.AppendSession do
               :continue -> wait_for_headers(session)
             end
 
-          {:error, _conn, _error, _responses} ->
-            {:error, :stream_error}
+          {:error, conn, _error, _responses} ->
+            {:error, :stream_error, conn}
 
           :unknown ->
             wait_for_headers(session)
@@ -140,21 +157,26 @@ defmodule S2.S2S.AppendSession do
             new_data = Shared.extract_data(responses, session.request_ref)
             all_data = acc <> new_data
 
-            # Check for :done (server closed stream — e.g. terminal error)
-            done? = Enum.any?(responses, &match?({:done, _}, &1))
+            case Shared.check_buffer_size(all_data) do
+              {:error, :buffer_overflow} ->
+                {:error, :buffer_overflow, close_session(session)}
 
-            case Shared.decode_frame(all_data, S2.V1.AppendAck) do
-              {:ok, ack, rest} ->
-                {:ok, ack, %{session | data: rest}}
+              :ok ->
+                done? = Shared.done?(responses)
 
-              {:error, reason} ->
-                {:error, reason, close_session(session)}
+                case Shared.decode_frame(all_data, S2.V1.AppendAck) do
+                  {:ok, ack, rest} ->
+                    {:ok, ack, %{session | data: rest}}
 
-              :incomplete when done? ->
-                {:error, :incomplete_frame, close_session(session)}
+                  {:error, reason} ->
+                    {:error, reason, close_session(session)}
 
-              :incomplete ->
-                do_receive_ack(session, all_data)
+                  :incomplete when done? ->
+                    {:error, :incomplete_frame, close_session(session)}
+
+                  :incomplete ->
+                    do_receive_ack(session, all_data)
+                end
             end
 
           {:error, conn, _error, _responses} ->

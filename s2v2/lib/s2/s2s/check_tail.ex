@@ -2,14 +2,19 @@ defmodule S2.S2S.CheckTail do
   @moduledoc """
   Check tail position for a stream.
 
-  The server always returns JSON for this endpoint, even with s2s/proto content type.
   Uses Mint HTTP/2 directly for consistency with the rest of the data plane.
+  No `Content-Type` header is sent because the server always returns JSON for
+  this endpoint regardless of the requested content type — sending `s2s/proto`
+  has no effect on the response format.
   """
 
   alias S2.S2S.Shared
 
+  @spec call(Mint.HTTP2.t(), String.t(), String.t()) ::
+          {:ok, S2.V1.StreamPosition.t(), Mint.HTTP2.t()}
+          | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream) do
-    path = "/v1/streams/#{stream}/records/tail"
+    path = "/v1/streams/#{URI.encode(stream)}/records/tail"
 
     headers = [
       {"s2-basin", basin}
@@ -35,13 +40,25 @@ defmodule S2.S2S.CheckTail do
 
   defp parse_tail_response(data, conn) do
     case Jason.decode(data) do
-      {:ok, %{"tail" => tail}} ->
+      {:ok, %{"tail" => %{"seq_num" => seq_num, "timestamp" => timestamp}}}
+      when is_integer(seq_num) and is_integer(timestamp) ->
         position = %S2.V1.StreamPosition{
-          seq_num: tail["seq_num"] || 0,
-          timestamp: tail["timestamp"] || 0
+          seq_num: seq_num,
+          timestamp: timestamp
         }
 
         {:ok, position, conn}
+
+      {:ok, %{"tail" => %{"seq_num" => seq_num}}} when is_integer(seq_num) ->
+        position = %S2.V1.StreamPosition{
+          seq_num: seq_num,
+          timestamp: 0
+        }
+
+        {:ok, position, conn}
+
+      {:ok, body} ->
+        {:error, {:decode_error, {:unexpected_tail_response, body}}, conn}
 
       {:error, reason} ->
         {:error, {:decode_error, reason}, conn}

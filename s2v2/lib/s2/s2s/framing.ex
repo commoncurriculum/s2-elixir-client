@@ -40,8 +40,10 @@ defmodule S2.S2S.Framing do
   defp compression_bits(:zstd), do: 0x20
   defp compression_bits(:gzip), do: 0x40
 
+  @type compression :: :none | :zstd | :gzip | :unknown
+
   defp parse_compression(0x00), do: :none
   defp parse_compression(0x20), do: :zstd
   defp parse_compression(0x40), do: :gzip
-  defp parse_compression(bits), do: {:unknown, bits}
+  defp parse_compression(_bits), do: :unknown
 end
