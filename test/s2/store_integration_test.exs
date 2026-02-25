@@ -25,7 +25,7 @@ defmodule S2.StoreIntegrationTest do
     end
 
     def new(attrs) do
-      %__MODULE__{}
+      %__MODULE__{ts: DateTime.utc_now()}
       |> changeset(Map.new(attrs))
       |> apply_action!(:new)
     end
@@ -34,11 +34,6 @@ defmodule S2.StoreIntegrationTest do
       message
       |> cast(attrs, [:user, :text, :ts])
       |> validate_required([:user, :text])
-      |> maybe_default_ts()
-    end
-
-    defp maybe_default_ts(changeset) do
-      if get_field(changeset, :ts), do: changeset, else: put_change(changeset, :ts, DateTime.utc_now())
     end
 
     def serializer do
