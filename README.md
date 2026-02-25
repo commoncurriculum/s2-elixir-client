@@ -67,12 +67,12 @@ defmodule MyApp.Chat.Message do
   embedded_schema do
     field :user, :string
     field :text, :string
-    field :ts, :string
+    field :ts, :utc_datetime
   end
 
   def new(attrs) do
     %__MODULE__{}
-    |> changeset(Map.new(attrs) |> Map.put_new(:ts, DateTime.utc_now() |> DateTime.to_iso8601()))
+    |> changeset(Map.new(attrs))
     |> apply_action!(:new)
   end
 
@@ -80,6 +80,11 @@ defmodule MyApp.Chat.Message do
     message
     |> cast(attrs, [:user, :text, :ts])
     |> validate_required([:user, :text])
+    |> maybe_default_ts()
+  end
+
+  defp maybe_default_ts(changeset) do
+    if get_field(changeset, :ts), do: changeset, else: put_change(changeset, :ts, DateTime.utc_now())
   end
 
   def serializer do
