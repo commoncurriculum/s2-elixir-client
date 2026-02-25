@@ -25,7 +25,25 @@ client = S2.Client.new(config)
 
 ## Example: Chat App
 
-A chat app where each room gets its own stream. Messages are typed structs, durably ordered, and can be replayed from any point. Uses streaming sessions for long-lived connections.
+A chat app where each room gets its own stream. Messages are Ecto embedded schemas, durably ordered, and listeners tail the stream in real time.
+
+```elixir
+# Usage
+MyApp.Chat.create_room("general")
+
+MyApp.Chat.send_message("general", "alice", "hey everyone!")
+MyApp.Chat.send_message("general", "bob", "hi alice!")
+
+# Listen to a room — streams messages as they arrive
+MyApp.Chat.listen("general", fn %MyApp.Chat.Message{} = msg ->
+  IO.puts("[#{msg.ts}] #{msg.user}: #{msg.text}")
+end)
+# [2026-02-25T14:30:00Z] alice: hey everyone!
+# [2026-02-25T14:30:01Z] bob: hi alice!
+# ... stays open, prints new messages as they arrive
+```
+
+Here's the implementation:
 
 ```elixir
 # config/config.exs
@@ -104,18 +122,20 @@ defmodule MyApp.Chat do
     GenServer.call(__MODULE__, {:send, room, Message.new(user, text)})
   end
 
-  def history(room, opts \\ []) do
-    GenServer.call(__MODULE__, {:history, room, opts})
+  # Spawns a process that tails the room stream from seq_num,
+  # calling `callback` for each message as it arrives.
+  def listen(room, callback, opts \\ []) do
+    GenServer.call(__MODULE__, {:listen, room, callback, opts})
   end
 
   @impl true
   def init(s2_config) do
-    config = S2.Config.new(base_url: s2_config[:base_url], token: s2_config[:token])
     {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
 
     {:ok, %{
-      client: S2.Client.new(config),
+      client: S2.Client.new(S2.Config.new(base_url: s2_config[:base_url], token: s2_config[:token])),
       conn: conn,
+      s2_config: s2_config,
       writer: Serialization.writer(),
       serializer: Message.serializer()
     }}
@@ -130,8 +150,6 @@ defmodule MyApp.Chat do
     {:reply, result, state}
   end
 
-  # Uses streaming append session — holds an open HTTP/2 stream to the server
-  # for low-latency, high-throughput writes without per-message handshake overhead.
   def handle_call({:send, room, message}, _from, state) do
     {input, writer} = Serialization.prepare(state.writer, message, state.serializer)
     {:ok, session} = S2.S2S.AppendSession.open(state.conn, @basin, "chat/#{room}")
@@ -140,45 +158,34 @@ defmodule MyApp.Chat do
     {:reply, {:ok, ack}, %{state | conn: session.conn, writer: writer}}
   end
 
-  # Uses streaming read session — keeps an open HTTP/2 stream so the server
-  # pushes batches as they arrive, ideal for tailing a room in real time.
-  def handle_call({:history, room, opts}, _from, state) do
+  # Each listener gets its own connection and process — ReadSession
+  # delivers TCP data to the owning process's mailbox.
+  def handle_call({:listen, room, callback, opts}, _from, state) do
+    serializer = state.serializer
+    s2_config = state.s2_config
     seq_num = Keyword.get(opts, :from, 0)
-    {:ok, session} = S2.S2S.ReadSession.open(state.conn, @basin, "chat/#{room}", seq_num: seq_num)
 
-    {messages, session} = read_all(session, state.serializer)
-    {:ok, session} = S2.S2S.ReadSession.close(session)
-    {:reply, {:ok, messages}, %{state | conn: session.conn}}
+    task = Task.async(fn ->
+      {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
+      {:ok, session} = S2.S2S.ReadSession.open(conn, @basin, "chat/#{room}", seq_num: seq_num)
+      tail_loop(session, serializer, callback)
+    end)
+
+    {:reply, {:ok, task}, state}
   end
 
-  defp read_all(session, serializer, reader \\ Serialization.reader(), acc \\ []) do
+  defp tail_loop(session, serializer, callback, reader \\ Serialization.reader()) do
     case S2.S2S.ReadSession.next_batch(session) do
       {:ok, batch, session} ->
         {messages, reader} = Serialization.decode(reader, batch.records, serializer)
-        read_all(session, serializer, reader, acc ++ messages)
+        Enum.each(messages, callback)
+        tail_loop(session, serializer, callback, reader)
 
-      {:error, :end_of_stream, session} ->
-        {acc, session}
+      {:error, :end_of_stream, _session} ->
+        :ok
     end
   end
 end
-```
-
-```elixir
-# Usage
-MyApp.Chat.create_room("general")
-MyApp.Chat.create_room("random")
-
-MyApp.Chat.send_message("general", "alice", "hey everyone!")
-MyApp.Chat.send_message("general", "bob", "hi alice!")
-MyApp.Chat.send_message("random", "alice", "anyone here?")
-
-{:ok, msgs} = MyApp.Chat.history("general")
-# [%MyApp.Chat.Message{user: "alice", text: "hey everyone!", ts: "2026-02-25T14:30:00Z"},
-#  %MyApp.Chat.Message{user: "bob",   text: "hi alice!",     ts: "2026-02-25T14:30:01Z"}]
-
-{:ok, msgs} = MyApp.Chat.history("random")
-# [%MyApp.Chat.Message{user: "alice", text: "anyone here?", ts: "2026-02-25T14:30:02Z"}]
 ```
 
 ## Control Plane
