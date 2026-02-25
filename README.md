@@ -150,6 +150,49 @@ Read options: `:seq_num`, `:count`, `:wait`, `:until`, `:clamp`, `:tail_offset`.
 
 Streaming sessions are **not safe to share across processes**. The underlying Mint connection delivers TCP messages to the owning process's mailbox. Create and use sessions within the same process.
 
+## Patterns
+
+Higher-level helpers that handle chunking, framing, deduplication, and serialization so you don't have to work with raw `AppendRecord` structs. Mirrors the [TypeScript SDK patterns](https://github.com/s2-streamstore/s2-sdk-typescript/tree/main/packages/patterns).
+
+### Writing
+
+`Serialization.prepare/3` takes any term, serializes it, splits large messages into sub-1 MiB chunks, frames multi-chunk messages with reassembly headers, and stamps each record with a writer ID + sequence number for deduplication.
+
+```elixir
+alias S2.Patterns.Serialization
+
+serializer = %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
+writer = Serialization.writer()
+
+{input, writer} = Serialization.prepare(writer, %{"event" => "signup", "user" => "alice"}, serializer)
+{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-basin", "my-stream", input)
+
+# Large messages (> 1 MiB) are automatically chunked across multiple records
+{input, writer} = Serialization.prepare(writer, %{"image" => large_binary}, serializer)
+{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-basin", "my-stream", input)
+```
+
+### Reading
+
+`Serialization.decode/3` reassembles chunked messages, filters duplicates (from retried appends), and deserializes back into terms.
+
+```elixir
+reader = Serialization.reader()
+
+{:ok, batch, conn} = S2.S2S.Read.call(conn, "my-basin", "my-stream", seq_num: 0)
+{messages, reader} = Serialization.decode(reader, batch.records, serializer)
+# messages is a list of decoded terms, with duplicates removed
+```
+
+### What the pipeline does
+
+| Step | Write side | Read side |
+|------|-----------|-----------|
+| 1 | Serialize term to binary | Filter duplicate records |
+| 2 | Chunk binary into sub-1 MiB pieces | Reassemble chunks into complete message |
+| 3 | Frame chunks with reassembly headers | Deserialize binary back to term |
+| 4 | Stamp with writer ID + dedupe sequence | |
+
 ## Architecture
 
 | Layer | Transport | Encoding | Library |
