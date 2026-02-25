@@ -84,19 +84,25 @@ defmodule S2.Store do
       # to bind stream functions to this store with a specific serializer.
       defmacro __using__(stream_opts) do
         store = __MODULE__
-        serializer = Keyword.get(stream_opts, :serializer) || @serializer
-        escaped_serializer = Macro.escape(serializer)
+
+        serializer_ast =
+          case Keyword.get(stream_opts, :serializer) do
+            nil -> Macro.escape(@serializer)
+            ast -> ast
+          end
 
         quote do
           @__store__ unquote(store)
-          @__serializer__ unquote(escaped_serializer)
+
+          @doc false
+          def __serializer__, do: unquote(serializer_ast)
 
           def append(stream, message) do
-            @__store__.append(stream, message, @__serializer__)
+            @__store__.append(stream, message, __serializer__())
           end
 
           def listen(stream, callback, opts \\ []) do
-            opts = Keyword.put_new(opts, :serializer, @__serializer__)
+            opts = Keyword.put_new(opts, :serializer, __serializer__())
             @__store__.listen(stream, callback, opts)
           end
 
@@ -131,6 +137,7 @@ defmodule S2.Store.Supervisor do
     children = [
       {Registry, keys: :unique, name: registry_name(config.store)},
       {DynamicSupervisor, name: dynamic_sup_name(config.store), strategy: :one_for_one},
+      {Task.Supervisor, name: task_sup_name(config.store)},
       {S2.Store.ControlPlane, config}
     ]
 
@@ -167,7 +174,7 @@ defmodule S2.Store.Supervisor do
     seq_num = Keyword.get(opts, :from, 0)
     serializer = Keyword.get(opts, :serializer, config.serializer)
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(task_sup_name(store), fn ->
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
       {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num)
       S2.Store.StreamWorker.tail_loop(session, serializer, callback)
@@ -181,6 +188,7 @@ defmodule S2.Store.Supervisor do
   end
 
   defp dynamic_sup_name(store), do: Module.concat(store, DynamicSupervisor)
+  defp task_sup_name(store), do: Module.concat(store, TaskSupervisor)
   defp control_plane_name(store), do: Module.concat(store, ControlPlane)
   defp registry_name(store), do: Module.concat(store, Registry)
 end

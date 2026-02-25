@@ -36,7 +36,7 @@ defmodule S2.S2S.AppendSession do
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream) do
     Logger.debug("S2S.AppendSession.open basin=#{basin} stream=#{stream}")
-    path = "/v1/streams/#{URI.encode(stream)}/records"
+    path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
 
     headers = [
       {"content-type", "s2s/proto"},

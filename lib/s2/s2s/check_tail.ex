@@ -17,7 +17,7 @@ defmodule S2.S2S.CheckTail do
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream) do
     Logger.debug("S2S.CheckTail basin=#{basin} stream=#{stream}")
-    path = "/v1/streams/#{URI.encode(stream)}/records/tail"
+    path = "/v1/streams/#{URI.encode_www_form(stream)}/records/tail"
 
     headers = [
       {"s2-basin", basin}

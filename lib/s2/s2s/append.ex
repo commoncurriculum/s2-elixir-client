@@ -23,7 +23,7 @@ defmodule S2.S2S.Append do
   end
 
   defp do_call(conn, basin, stream, body) do
-    path = "/v1/streams/#{URI.encode(stream)}/records"
+    path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
 
     headers = [
       {"content-type", "s2s/proto"},

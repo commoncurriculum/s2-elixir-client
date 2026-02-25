@@ -19,7 +19,7 @@ defmodule S2.S2S.Read do
   def call(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.Read basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
     query = Shared.build_read_query(opts)
-    path = "/v1/streams/#{URI.encode(stream)}/records" <> query
+    path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
 
     headers = [
       {"content-type", "s2s/proto"},

@@ -12,17 +12,6 @@ def deps do
 end
 ```
 
-## Quick Start
-
-```elixir
-# Control plane client
-config = S2.Config.new(base_url: "https://aws.s2.dev", token: "your-token")
-client = S2.Client.new(config)
-
-# Data plane connection (Mint HTTP/2)
-{:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev", token: "your-token")
-```
-
 ## Example: Chat App
 
 A chat app where each room gets its own stream. Messages are Ecto embedded schemas, durably ordered, and listeners tail the stream in real time.
