@@ -38,7 +38,7 @@ end)
 # ... stays open, prints new messages as they arrive
 ```
 
-Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams.
+Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams. It handles chunking, framing, and deduplication automatically (see [Patterns](#patterns)), so you just work with your own types.
 
 ```elixir
 # config/config.exs
@@ -86,7 +86,8 @@ defmodule MyApp.Chat.Message do
     %{
       serialize: &Jason.encode!/1,
       deserialize: fn json ->
-        json |> Jason.decode!() |> then(&changeset/1) |> apply_action!(:decode)
+        attrs = Jason.decode!(json)
+        %__MODULE__{} |> cast(attrs, [:user, :text, :ts]) |> apply_action!(:load)
       end
     }
   end
@@ -137,11 +138,31 @@ All control plane functions take an opts keyword list with `server: client` (and
 
 ### Access Tokens
 
+Issue scoped, expiring tokens for clients. Useful for giving a browser read-only access to a specific stream (e.g. for real-time updates over SSE or a WebSocket bridge).
+
 ```elixir
-{:ok, token}  = S2.AccessTokens.issue_access_token(%S2.AccessTokenScope{...}, server: client)
+# Issue a read-only token scoped to a single basin
+{:ok, resp} = S2.AccessTokens.issue_access_token(
+  %S2.AccessTokenInfo{
+    expires_at: DateTime.add(DateTime.utc_now(), 3600, :second),
+    scope: %S2.AccessTokenScope{
+      basins: %{"my-basin" => %{}},
+      op_groups: %S2.PermittedOperationGroups{
+        stream: %S2.ReadWritePermissions{read: true, write: false}
+      }
+    }
+  },
+  server: client
+)
+
+# resp.access_token is the bearer token string — send it to the client
+# The client can then connect to the S2 data plane directly to read streams
+
 {:ok, tokens} = S2.AccessTokens.list_access_tokens(server: client)
 :ok           = S2.AccessTokens.revoke_access_token("token-id", server: client)
 ```
+
+You can also scope tokens to specific operations via the `ops` field (e.g. `["read", "check-tail"]`) or to specific streams via the `streams` field.
 
 ### Metrics
 

@@ -40,7 +40,8 @@ defmodule S2.StoreIntegrationTest do
       %{
         serialize: &Jason.encode!/1,
         deserialize: fn json ->
-          json |> Jason.decode!() |> then(&changeset/1) |> apply_action!(:decode)
+          attrs = Jason.decode!(json)
+          %__MODULE__{} |> cast(attrs, [:user, :text, :ts]) |> apply_action!(:load)
         end
       }
     end
