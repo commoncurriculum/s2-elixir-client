@@ -3,12 +3,15 @@ defmodule S2.S2S.Append do
   Unary append — sends a single `AppendInput` and receives a single `AppendAck`.
   """
 
+  require Logger
+
   alias S2.S2S.Shared
 
   @spec call(Mint.HTTP2.t(), String.t(), String.t(), S2.V1.AppendInput.t()) ::
           {:ok, S2.V1.AppendAck.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, %S2.V1.AppendInput{} = input) do
+    Logger.debug("S2S.Append basin=#{basin} stream=#{stream} records=#{length(input.records)}")
     body = Shared.encode_framed(input)
     path = "/v1/streams/#{URI.encode(stream)}/records"
 

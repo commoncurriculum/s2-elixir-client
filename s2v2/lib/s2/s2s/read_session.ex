@@ -14,6 +14,8 @@ defmodule S2.S2S.ReadSession do
   won't see the TCP data.
   """
 
+  require Logger
+
   alias S2.S2S.Shared
 
   @recv_timeout 10_000
@@ -34,6 +36,7 @@ defmodule S2.S2S.ReadSession do
   @spec open(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
+    Logger.debug("S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
     query = Shared.build_read_query(opts)
     path = "/v1/streams/#{URI.encode(stream)}/records" <> query
 

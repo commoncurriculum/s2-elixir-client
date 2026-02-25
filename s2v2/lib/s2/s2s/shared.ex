@@ -37,8 +37,9 @@ defmodule S2.S2S.Shared do
               do_receive_complete(conn, request_ref, acc, timeout)
             end
 
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, conn}
+          {:error, updated_conn, _error, _responses} ->
+            # Use Mint's updated conn — it may have cleaned up stream state.
+            {:error, :stream_error, updated_conn}
 
           :unknown ->
             do_receive_complete(conn, request_ref, acc, timeout)

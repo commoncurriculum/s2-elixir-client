@@ -8,12 +8,15 @@ defmodule S2.S2S.CheckTail do
   has no effect on the response format.
   """
 
+  require Logger
+
   alias S2.S2S.Shared
 
   @spec call(Mint.HTTP2.t(), String.t(), String.t()) ::
           {:ok, S2.V1.StreamPosition.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream) do
+    Logger.debug("S2S.CheckTail basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode(stream)}/records/tail"
 
     headers = [
@@ -41,7 +44,7 @@ defmodule S2.S2S.CheckTail do
   defp parse_tail_response(data, conn) do
     case Jason.decode(data) do
       {:ok, %{"tail" => %{"seq_num" => seq_num, "timestamp" => timestamp}}}
-      when is_integer(seq_num) and is_integer(timestamp) ->
+      when is_integer(seq_num) and seq_num >= 0 and is_integer(timestamp) and timestamp >= 0 ->
         position = %S2.V1.StreamPosition{
           seq_num: seq_num,
           timestamp: timestamp
@@ -49,7 +52,7 @@ defmodule S2.S2S.CheckTail do
 
         {:ok, position, conn}
 
-      {:ok, %{"tail" => %{"seq_num" => seq_num}}} when is_integer(seq_num) ->
+      {:ok, %{"tail" => %{"seq_num" => seq_num}}} when is_integer(seq_num) and seq_num >= 0 ->
         position = %S2.V1.StreamPosition{
           seq_num: seq_num,
           timestamp: 0
@@ -57,8 +60,11 @@ defmodule S2.S2S.CheckTail do
 
         {:ok, position, conn}
 
+      {:ok, %{"tail" => tail}} when is_map(tail) ->
+        {:error, {:decode_error, {:invalid_tail_fields, inspect(tail)}}, conn}
+
       {:ok, body} ->
-        {:error, {:decode_error, {:unexpected_tail_response, inspect(body)}}, conn}
+        {:error, {:decode_error, {:missing_tail_key, inspect(body)}}, conn}
 
       {:error, reason} ->
         {:error, {:decode_error, reason}, conn}

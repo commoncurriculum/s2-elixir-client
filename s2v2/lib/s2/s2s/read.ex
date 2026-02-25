@@ -7,6 +7,8 @@ defmodule S2.S2S.Read do
   ReadBatch) are skipped automatically.
   """
 
+  require Logger
+
   alias S2.S2S.Shared
 
   @recv_timeout 5_000
@@ -15,6 +17,7 @@ defmodule S2.S2S.Read do
           {:ok, S2.V1.ReadBatch.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, opts \\ []) do
+    Logger.debug("S2S.Read basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
     query = Shared.build_read_query(opts)
     path = "/v1/streams/#{URI.encode(stream)}/records" <> query
 

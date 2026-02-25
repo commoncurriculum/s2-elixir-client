@@ -14,6 +14,8 @@ defmodule S2.S2S.AppendSession do
   won't see the TCP data.
   """
 
+  require Logger
+
   alias S2.S2S.Shared
 
   @recv_timeout 5_000
@@ -33,6 +35,7 @@ defmodule S2.S2S.AppendSession do
   @spec open(Mint.HTTP2.t(), String.t(), String.t()) ::
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream) do
+    Logger.debug("S2S.AppendSession.open basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode(stream)}/records"
 
     headers = [

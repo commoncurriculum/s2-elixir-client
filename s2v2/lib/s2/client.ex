@@ -1,6 +1,9 @@
 defmodule S2.Client do
+  @type t :: %__MODULE__{config: S2.Config.t(), req: Req.Request.t()}
+
   defstruct [:config, :req]
 
+  @spec new(S2.Config.t()) :: t()
   def new(%S2.Config{} = config) do
     headers = base_headers(config)
 
@@ -13,6 +16,7 @@ defmodule S2.Client do
     %__MODULE__{config: config, req: req}
   end
 
+  @spec request(map()) :: {:ok, term()} | {:error, term()} | :ok
   def request(%{
         url: url,
         method: method,
@@ -26,9 +30,13 @@ defmodule S2.Client do
 
     headers = if basin, do: [{"s2-basin", basin}], else: []
 
+    # URL-encode path segments. Generated operations use raw interpolation
+    # (e.g. "/basins/#{basin}"), so we encode here to handle special characters.
+    encoded_url = encode_url_path(url)
+
     req_opts = [
       method: method,
-      url: url,
+      url: encoded_url,
       headers: headers
     ]
 
@@ -46,7 +54,12 @@ defmodule S2.Client do
         handle_response(status, resp_body, response_specs)
 
       {:error, exception} ->
-        {:error, %S2.Error{status: nil, message: Exception.message(exception)}}
+        message =
+          if is_exception(exception),
+            do: Exception.message(exception),
+            else: inspect(exception)
+
+        {:error, %S2.Error{status: nil, message: message}}
     end
   end
 
@@ -93,12 +106,16 @@ defmodule S2.Client do
   end
 
   defp decode_field(value, {:union, variants}) do
-    Enum.find_value(variants, value, fn
-      :null -> if is_nil(value), do: nil
-      {schema_mod, :t} when is_atom(schema_mod) and is_map(value) -> decode_schema(value, schema_mod)
-      {:const, const_value} -> if value == const_value, do: value
+    Enum.find_value(variants, fn
+      :null when is_nil(value) -> {:decoded, nil}
+      {schema_mod, :t} when is_atom(schema_mod) and is_map(value) -> {:decoded, decode_schema(value, schema_mod)}
+      {:const, const_value} when const_value == value -> {:decoded, value}
       _ -> nil
     end)
+    |> case do
+      {:decoded, result} -> result
+      nil -> value
+    end
   end
 
   defp decode_field(value, _type), do: value
@@ -112,6 +129,14 @@ defmodule S2.Client do
 
   defp encode_body(values) when is_list(values), do: Enum.map(values, &encode_body/1)
   defp encode_body(body), do: body
+
+  # Encode each path segment individually, preserving "/" separators.
+  defp encode_url_path(url) do
+    url
+    |> String.split("/")
+    |> Enum.map(&URI.encode/1)
+    |> Enum.join("/")
+  end
 
   defp base_headers(%S2.Config{token: nil}), do: []
 
