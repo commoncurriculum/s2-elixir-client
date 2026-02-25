@@ -30,11 +30,13 @@ A chat app where each room gets its own stream. Messages are Ecto embedded schem
 ```elixir
 # Usage
 MyApp.Chat.create_room("general")
+MyApp.Chat.create_room("random")
 
 MyApp.Chat.send_message("general", "alice", "hey everyone!")
 MyApp.Chat.send_message("general", "bob", "hi alice!")
+MyApp.Chat.send_message("random", "alice", "anyone here?")
 
-# Listen to a room — streams messages as they arrive
+# Listen to a room — tails the stream, calling your function for each message
 MyApp.Chat.listen("general", fn %MyApp.Chat.Message{} = msg ->
   IO.puts("[#{msg.ts}] #{msg.user}: #{msg.text}")
 end)
@@ -43,13 +45,22 @@ end)
 # ... stays open, prints new messages as they arrive
 ```
 
-Here's the implementation:
+Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams.
 
 ```elixir
 # config/config.exs
-config :my_app, :s2,
+config :my_app, MyApp.S2,
   base_url: "https://aws.s2.dev",
   token: System.get_env("S2_TOKEN")
+```
+
+```elixir
+# lib/my_app/s2.ex
+defmodule MyApp.S2 do
+  use S2.Store,
+    otp_app: :my_app,
+    basin: "my-app"
+end
 ```
 
 ```elixir
@@ -90,10 +101,8 @@ end
 ```elixir
 # lib/my_app/application.ex
 def start(_type, _args) do
-  s2_config = Application.fetch_env!(:my_app, :s2)
-
   children = [
-    {MyApp.Chat, s2_config}
+    MyApp.S2
   ]
 
   Supervisor.start_link(children, strategy: :one_for_one)
@@ -103,87 +112,18 @@ end
 ```elixir
 # lib/my_app/chat.ex
 defmodule MyApp.Chat do
-  use GenServer
-
-  alias S2.Patterns.Serialization
   alias MyApp.Chat.Message
 
-  @basin "my-app"
-
-  def start_link(s2_config) do
-    GenServer.start_link(__MODULE__, s2_config, name: __MODULE__)
-  end
-
   def create_room(room) do
-    GenServer.call(__MODULE__, {:create_room, room})
+    MyApp.S2.create_stream("chat/#{room}")
   end
 
   def send_message(room, user, text) do
-    GenServer.call(__MODULE__, {:send, room, Message.new(user, text)})
+    MyApp.S2.append("chat/#{room}", Message.new(user, text), Message.serializer())
   end
 
-  # Spawns a process that tails the room stream from seq_num,
-  # calling `callback` for each message as it arrives.
-  def listen(room, callback, opts \\ []) do
-    GenServer.call(__MODULE__, {:listen, room, callback, opts})
-  end
-
-  @impl true
-  def init(s2_config) do
-    {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
-
-    {:ok, %{
-      client: S2.Client.new(S2.Config.new(base_url: s2_config[:base_url], token: s2_config[:token])),
-      conn: conn,
-      s2_config: s2_config,
-      writer: Serialization.writer(),
-      serializer: Message.serializer()
-    }}
-  end
-
-  @impl true
-  def handle_call({:create_room, room}, _from, state) do
-    result = S2.Streams.create_stream(
-      %S2.CreateStreamRequest{stream: "chat/#{room}"},
-      server: state.client, basin: @basin
-    )
-    {:reply, result, state}
-  end
-
-  def handle_call({:send, room, message}, _from, state) do
-    {input, writer} = Serialization.prepare(state.writer, message, state.serializer)
-    {:ok, session} = S2.S2S.AppendSession.open(state.conn, @basin, "chat/#{room}")
-    {:ok, ack, session} = S2.S2S.AppendSession.append(session, input)
-    {:ok, session} = S2.S2S.AppendSession.close(session)
-    {:reply, {:ok, ack}, %{state | conn: session.conn, writer: writer}}
-  end
-
-  # Each listener gets its own connection and process — ReadSession
-  # delivers TCP data to the owning process's mailbox.
-  def handle_call({:listen, room, callback, opts}, _from, state) do
-    serializer = state.serializer
-    s2_config = state.s2_config
-    seq_num = Keyword.get(opts, :from, 0)
-
-    task = Task.async(fn ->
-      {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
-      {:ok, session} = S2.S2S.ReadSession.open(conn, @basin, "chat/#{room}", seq_num: seq_num)
-      tail_loop(session, serializer, callback)
-    end)
-
-    {:reply, {:ok, task}, state}
-  end
-
-  defp tail_loop(session, serializer, callback, reader \\ Serialization.reader()) do
-    case S2.S2S.ReadSession.next_batch(session) do
-      {:ok, batch, session} ->
-        {messages, reader} = Serialization.decode(reader, batch.records, serializer)
-        Enum.each(messages, callback)
-        tail_loop(session, serializer, callback, reader)
-
-      {:error, :end_of_stream, _session} ->
-        :ok
-    end
+  def listen(room, callback) do
+    MyApp.S2.listen("chat/#{room}", callback, serializer: Message.serializer())
   end
 end
 ```
