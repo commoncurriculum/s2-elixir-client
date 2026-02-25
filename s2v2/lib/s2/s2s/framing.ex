@@ -1,4 +1,6 @@
 defmodule S2.S2S.Framing do
+  @moduledoc false
+
   import Bitwise
 
   @terminal_bit 0x80
@@ -6,6 +8,11 @@ defmodule S2.S2S.Framing do
   # Note: the 24-bit length prefix naturally caps frames at ~16 MiB (0xFFFFFF bytes).
   # No additional length validation is needed.
 
+  @type compression :: :none | :zstd | :gzip | :unknown
+
+  @type frame :: %{terminal: boolean(), compression: compression(), body: binary()}
+
+  @spec encode(binary(), keyword()) :: binary()
   def encode(body, opts \\ []) do
     terminal = Keyword.get(opts, :terminal, false)
     compression = Keyword.get(opts, :compression, :none)
@@ -16,6 +23,7 @@ defmodule S2.S2S.Framing do
     <<length::24-big, flags, body::binary>>
   end
 
+  @spec decode(binary()) :: {:ok, frame(), binary()} | :incomplete
   def decode(data) when byte_size(data) < 3, do: :incomplete
 
   def decode(<<length::24-big, rest::binary>>) when byte_size(rest) < length do
@@ -41,8 +49,6 @@ defmodule S2.S2S.Framing do
   defp compression_bits(:none), do: 0x00
   defp compression_bits(:zstd), do: 0x20
   defp compression_bits(:gzip), do: 0x40
-
-  @type compression :: :none | :zstd | :gzip | :unknown
 
   defp parse_compression(0x00), do: :none
   defp parse_compression(0x20), do: :zstd

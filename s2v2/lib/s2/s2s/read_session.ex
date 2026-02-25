@@ -18,6 +18,8 @@ defmodule S2.S2S.ReadSession do
 
   alias S2.S2S.Shared
 
+  # Longer than AppendSession's 5s because read streams may wait for new data
+  # during live tailing before the server sends the next batch.
   @recv_timeout 10_000
 
   @typedoc "An open read session."
