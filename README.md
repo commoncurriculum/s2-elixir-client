@@ -23,9 +23,9 @@ client = S2.Client.new(config)
 {:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev", token: "your-token")
 ```
 
-## Example: Event Log
+## Example: Chat App
 
-Create a stream, write some events, and read them back.
+A chat app where each room gets its own stream. Messages are durably ordered and can be replayed from any point.
 
 ```elixir
 # config/config.exs
@@ -40,7 +40,7 @@ def start(_type, _args) do
   s2_config = Application.fetch_env!(:my_app, :s2)
 
   children = [
-    {MyApp.EventLog, s2_config}
+    {MyApp.Chat, s2_config}
   ]
 
   Supervisor.start_link(children, strategy: :one_for_one)
@@ -48,41 +48,62 @@ end
 ```
 
 ```elixir
-# lib/my_app/event_log.ex
-defmodule MyApp.EventLog do
+# lib/my_app/chat.ex
+defmodule MyApp.Chat do
   use GenServer
 
   alias S2.Patterns.Serialization
 
   @basin "my-app"
-  @stream "events"
   @serializer %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
 
   def start_link(s2_config) do
     GenServer.start_link(__MODULE__, s2_config, name: __MODULE__)
   end
 
-  def append(event), do: GenServer.call(__MODULE__, {:append, event})
-  def read(seq_num \\ 0), do: GenServer.call(__MODULE__, {:read, seq_num})
+  def send_message(room, user, text) do
+    GenServer.call(__MODULE__, {:send, room, %{user: user, text: text, ts: DateTime.utc_now()}})
+  end
+
+  def history(room, opts \\ []) do
+    GenServer.call(__MODULE__, {:history, room, opts})
+  end
+
+  def create_room(room) do
+    GenServer.call(__MODULE__, {:create_room, room})
+  end
 
   @impl true
   def init(s2_config) do
     config = S2.Config.new(base_url: s2_config[:base_url], token: s2_config[:token])
-    client = S2.Client.new(config)
     {:ok, conn} = S2.S2S.Connection.open(s2_config[:base_url], token: s2_config[:token])
 
-    {:ok, %{client: client, conn: conn, writer: Serialization.writer()}}
+    {:ok, %{
+      client: S2.Client.new(config),
+      conn: conn,
+      writer: Serialization.writer()
+    }}
   end
 
   @impl true
-  def handle_call({:append, event}, _from, state) do
-    {input, writer} = Serialization.prepare(state.writer, event, @serializer)
-    {:ok, ack, conn} = S2.S2S.Append.call(state.conn, @basin, @stream, input)
+  def handle_call({:create_room, room}, _from, state) do
+    result = S2.Streams.create_stream(
+      %S2.CreateStreamRequest{stream: "chat/#{room}"},
+      server: state.client, basin: @basin
+    )
+    {:reply, result, state}
+  end
+
+  def handle_call({:send, room, message}, _from, state) do
+    {input, writer} = Serialization.prepare(state.writer, message, @serializer)
+    {:ok, ack, conn} = S2.S2S.Append.call(state.conn, @basin, "chat/#{room}", input)
     {:reply, {:ok, ack}, %{state | conn: conn, writer: writer}}
   end
 
-  def handle_call({:read, seq_num}, _from, state) do
-    {:ok, batch, conn} = S2.S2S.Read.call(state.conn, @basin, @stream, seq_num: seq_num)
+  def handle_call({:history, room, opts}, _from, state) do
+    seq_num = Keyword.get(opts, :from, 0)
+    {:ok, batch, conn} = S2.S2S.Read.call(state.conn, @basin, "chat/#{room}", seq_num: seq_num)
+
     reader = Serialization.reader()
     {messages, _reader} = Serialization.decode(reader, batch.records, @serializer)
     {:reply, {:ok, messages}, %{state | conn: conn}}
@@ -92,14 +113,19 @@ end
 
 ```elixir
 # Usage
-{:ok, _} = MyApp.EventLog.append(%{type: "signup", user: "alice"})
-{:ok, _} = MyApp.EventLog.append(%{type: "login", user: "alice"})
-{:ok, _} = MyApp.EventLog.append(%{type: "signup", user: "bob"})
+MyApp.Chat.create_room("general")
+MyApp.Chat.create_room("random")
 
-{:ok, events} = MyApp.EventLog.read()
-# [%{"type" => "signup", "user" => "alice"},
-#  %{"type" => "login", "user" => "alice"},
-#  %{"type" => "signup", "user" => "bob"}]
+MyApp.Chat.send_message("general", "alice", "hey everyone!")
+MyApp.Chat.send_message("general", "bob", "hi alice!")
+MyApp.Chat.send_message("random", "alice", "anyone here?")
+
+{:ok, msgs} = MyApp.Chat.history("general")
+# [%{"user" => "alice", "text" => "hey everyone!", "ts" => "2026-02-25T..."},
+#  %{"user" => "bob",   "text" => "hi alice!",     "ts" => "2026-02-25T..."}]
+
+{:ok, msgs} = MyApp.Chat.history("random")
+# [%{"user" => "alice", "text" => "anyone here?", "ts" => "2026-02-25T..."}]
 ```
 
 For high-throughput or long-lived workloads, use streaming sessions instead of single requests — see [Streaming Append](#streaming-append) and [Streaming Read](#streaming-read) below.
