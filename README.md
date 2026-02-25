@@ -28,16 +28,20 @@ client = S2.Client.new(config)
 A chat app where each room gets its own stream. Messages are Ecto embedded schemas, durably ordered, and listeners tail the stream in real time.
 
 ```elixir
-# Usage
-MyApp.Chat.create_room("general")
-MyApp.Chat.create_room("random")
+alias MyApp.Chat
+alias MyApp.Chat.Message
 
-MyApp.Chat.send_message("general", "alice", "hey everyone!")
-MyApp.Chat.send_message("general", "bob", "hi alice!")
-MyApp.Chat.send_message("random", "alice", "anyone here?")
+# Create rooms (each becomes its own S2 stream)
+Chat.create_room("general")
+Chat.create_room("random")
+
+# Append typed messages
+Chat.append("general", Message.new(user: "alice", text: "hey everyone!"))
+Chat.append("general", Message.new(user: "bob", text: "hi alice!"))
+Chat.append("random", Message.new(user: "alice", text: "anyone here?"))
 
 # Listen to a room — tails the stream, calling your function for each message
-MyApp.Chat.listen("general", fn %MyApp.Chat.Message{} = msg ->
+Chat.listen("general", fn %Message{} = msg ->
   IO.puts("[#{msg.ts}] #{msg.user}: #{msg.text}")
 end)
 # [2026-02-25T14:30:00Z] alice: hey everyone!
@@ -77,8 +81,10 @@ defmodule MyApp.Chat.Message do
     field :ts, :string
   end
 
-  def new(user, text) do
-    %__MODULE__{user: user, text: text, ts: DateTime.utc_now() |> DateTime.to_iso8601()}
+  def new(attrs) do
+    %__MODULE__{}
+    |> changeset(Map.new(attrs) |> Map.put_new(:ts, DateTime.utc_now() |> DateTime.to_iso8601()))
+    |> apply_action!(:new)
   end
 
   def changeset(message \\ %__MODULE__{}, attrs) do
@@ -114,11 +120,7 @@ end
 defmodule MyApp.Chat do
   use MyApp.S2, serializer: MyApp.Chat.Message.serializer()
 
-  alias MyApp.Chat.Message
-
   def create_room(room), do: create_stream("chat/#{room}")
-  def send_message(room, user, text), do: append("chat/#{room}", Message.new(user, text))
-  def listen(room, callback), do: listen("chat/#{room}", callback)
 end
 ```
 
