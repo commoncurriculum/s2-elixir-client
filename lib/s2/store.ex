@@ -66,6 +66,36 @@ defmodule S2.Store do
         S2.Store.Server.listen(__MODULE__, stream, callback, opts)
       end
 
+      # Allow `use MyApp.S2, serializer: ...` in downstream modules
+      # to bind stream functions to this store with a specific serializer.
+      defmacro __using__(stream_opts) do
+        store = __MODULE__
+        serializer = Keyword.get(stream_opts, :serializer) || @serializer
+        escaped_serializer = Macro.escape(serializer)
+
+        quote do
+          @__store__ unquote(store)
+          @__serializer__ unquote(escaped_serializer)
+
+          def append(stream, message) do
+            @__store__.append(stream, message, @__serializer__)
+          end
+
+          def listen(stream, callback, opts \\ []) do
+            opts = Keyword.put_new(opts, :serializer, @__serializer__)
+            @__store__.listen(stream, callback, opts)
+          end
+
+          def create_stream(stream) do
+            @__store__.create_stream(stream)
+          end
+
+          def delete_stream(stream) do
+            @__store__.delete_stream(stream)
+          end
+        end
+      end
+
       defoverridable child_spec: 1
     end
   end

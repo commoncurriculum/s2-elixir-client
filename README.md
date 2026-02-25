@@ -112,19 +112,13 @@ end
 ```elixir
 # lib/my_app/chat.ex
 defmodule MyApp.Chat do
+  use MyApp.S2, serializer: MyApp.Chat.Message.serializer()
+
   alias MyApp.Chat.Message
 
-  def create_room(room) do
-    MyApp.S2.create_stream("chat/#{room}")
-  end
-
-  def send_message(room, user, text) do
-    MyApp.S2.append("chat/#{room}", Message.new(user, text), Message.serializer())
-  end
-
-  def listen(room, callback) do
-    MyApp.S2.listen("chat/#{room}", callback, serializer: Message.serializer())
-  end
+  def create_room(room), do: create_stream("chat/#{room}")
+  def send_message(room, user, text), do: append("chat/#{room}", Message.new(user, text))
+  def listen(room, callback), do: listen("chat/#{room}", callback)
 end
 ```
 

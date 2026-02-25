@@ -58,4 +58,39 @@ defmodule S2.StoreTest do
       assert config.serializer.deserialize.(~s({"hello":"world"})) == %{"hello" => "world"}
     end
   end
+
+  describe "use MyStore (stream module)" do
+    defmodule StreamStore do
+      use S2.Store,
+        otp_app: :s2,
+        basin: "stream-basin"
+    end
+
+    defmodule ChatStream do
+      use S2.StoreTest.StreamStore,
+        serializer: %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
+    end
+
+    test "defines append/2 bound to the store and serializer" do
+      assert function_exported?(ChatStream, :append, 2)
+    end
+
+    test "defines listen/2 bound to the store and serializer" do
+      assert function_exported?(ChatStream, :listen, 2)
+      assert function_exported?(ChatStream, :listen, 3)
+    end
+
+    test "defines create_stream/1 and delete_stream/1" do
+      assert function_exported?(ChatStream, :create_stream, 1)
+      assert function_exported?(ChatStream, :delete_stream, 1)
+    end
+
+    defmodule DefaultStream do
+      use S2.StoreTest.StreamStore
+    end
+
+    test "defaults to store serializer when none provided" do
+      assert function_exported?(DefaultStream, :append, 2)
+    end
+  end
 end
