@@ -11,8 +11,18 @@ defmodule S2.S2S.Append do
           {:ok, S2.V1.AppendAck.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, %S2.V1.AppendInput{} = input) do
-    Logger.debug("S2S.Append basin=#{basin} stream=#{stream} records=#{length(input.records)}")
-    body = Shared.encode_framed(input)
+    Logger.debug("S2S.Append basin=#{basin} stream=#{stream} records=#{length(input.records || [])}")
+
+    case Shared.encode_framed(input) do
+      {:error, reason} ->
+        {:error, reason, conn}
+
+      {:ok, body} ->
+        do_call(conn, basin, stream, body)
+    end
+  end
+
+  defp do_call(conn, basin, stream, body) do
     path = "/v1/streams/#{URI.encode(stream)}/records"
 
     headers = [

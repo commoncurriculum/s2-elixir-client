@@ -95,8 +95,13 @@ defmodule S2.S2S.ReadSession do
   def close(%__MODULE__{} = session) do
     conn =
       case Mint.HTTP2.cancel_request(session.conn, session.request_ref) do
-        {:ok, conn} -> conn
-        {:error, conn, _reason} -> conn
+        {:ok, conn} ->
+          conn
+
+        {:error, conn, reason} ->
+          # Best-effort close: stream may already be closed by server.
+          Logger.debug("ReadSession.close cancel_request failed: #{inspect(reason)}")
+          conn
       end
 
     {:ok, %{session | conn: conn, closed: true}}
@@ -163,6 +168,11 @@ defmodule S2.S2S.ReadSession do
                   {:ok, batch, rest} ->
                     {:ok, batch, %{session | data: rest}}
 
+                  # :incomplete after done means the server closed the stream.
+                  # decode_read_batch already skips heartbeat frames internally,
+                  # so :incomplete here means either empty remaining data (clean
+                  # EOF after heartbeats) or a truly truncated frame (server bug).
+                  # Both are end_of_stream — no more data will arrive.
                   :incomplete when done? ->
                     {:error, :end_of_stream, close_session(session)}
 

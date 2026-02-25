@@ -74,15 +74,20 @@ defmodule S2.S2S.AppendSession do
 
   def append(%__MODULE__{} = session, %S2.V1.AppendInput{} = input) do
     check_owner!(session)
-    body = Shared.encode_framed(input)
 
-    case Mint.HTTP2.stream_request_body(session.conn, session.request_ref, body) do
-      {:ok, conn} ->
-        session = %{session | conn: conn}
-        receive_ack(session)
+    case Shared.encode_framed(input) do
+      {:error, reason} ->
+        {:error, reason, close_session(session)}
 
-      {:error, conn, reason} ->
-        {:error, reason, close_session(session, conn)}
+      {:ok, body} ->
+        case Mint.HTTP2.stream_request_body(session.conn, session.request_ref, body) do
+          {:ok, conn} ->
+            session = %{session | conn: conn}
+            receive_ack(session)
+
+          {:error, conn, reason} ->
+            {:error, reason, close_session(session, conn)}
+        end
     end
   end
 
@@ -165,7 +170,7 @@ defmodule S2.S2S.AppendSession do
 
             case Shared.check_buffer_size(all_data) do
               {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, close_session(session)}
+                {:error, :buffer_overflow, close_session(%{session | data: all_data})}
 
               :ok ->
                 done? = Shared.done?(responses)

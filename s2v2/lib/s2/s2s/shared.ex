@@ -18,7 +18,7 @@ defmodule S2.S2S.Shared do
   once the stream is done.
   """
   @spec receive_complete(conn, reference(), keyword()) ::
-          {:ok, map(), conn} | {:error, atom(), conn}
+          {:ok, map(), conn} | {:error, term(), conn}
   def receive_complete(conn, request_ref, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     do_receive_complete(conn, request_ref, %{status: nil, data: <<>>}, timeout)
@@ -45,7 +45,7 @@ defmodule S2.S2S.Shared do
             do_receive_complete(conn, request_ref, acc, timeout)
         end
     after
-      timeout -> {:error, :timeout, conn}
+      timeout -> {:error, {:timeout, timeout}, conn}
     end
   end
 
@@ -155,6 +155,8 @@ defmodule S2.S2S.Shared do
   """
   @spec decode_read_batch(binary()) ::
           {:ok, S2.V1.ReadBatch.t(), binary()} | {:error, term()} | :incomplete
+  # Heartbeat skipping is tail-recursive (BEAM TCO), so consecutive heartbeats
+  # won't blow the stack. Each heartbeat also shrinks `rest`, so it terminates.
   def decode_read_batch(data) do
     case Framing.decode(data) do
       {:ok, %{terminal: false, body: body}, rest} ->
@@ -196,13 +198,18 @@ defmodule S2.S2S.Shared do
 
   @doc """
   Encode a Protox-compatible struct (e.g. `S2.V1.AppendInput`) into an
-  S2S-framed binary. Raises on encoding failure.
+  S2S-framed binary.
   """
-  @spec encode_framed(struct()) :: binary()
+  @spec encode_framed(struct()) :: {:ok, binary()} | {:error, term()}
   def encode_framed(proto_struct) do
-    {iodata, _size} = Protox.encode!(proto_struct)
-    proto_bytes = IO.iodata_to_binary(iodata)
-    Framing.encode(proto_bytes)
+    case Protox.encode(proto_struct) do
+      {:ok, iodata, _size} ->
+        proto_bytes = IO.iodata_to_binary(iodata)
+        {:ok, Framing.encode(proto_bytes)}
+
+      {:error, reason} ->
+        {:error, {:encode_error, reason}}
+    end
   end
 
   @doc """

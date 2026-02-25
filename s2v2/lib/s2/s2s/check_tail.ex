@@ -52,6 +52,7 @@ defmodule S2.S2S.CheckTail do
 
         {:ok, position, conn}
 
+      # Server may omit timestamp for empty streams. Default to 0 (not provided).
       {:ok, %{"tail" => %{"seq_num" => seq_num}}} when is_integer(seq_num) and seq_num >= 0 ->
         position = %S2.V1.StreamPosition{
           seq_num: seq_num,

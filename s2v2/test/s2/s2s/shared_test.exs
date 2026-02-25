@@ -103,7 +103,7 @@ defmodule S2.S2S.SharedTest do
         records: [%S2.V1.AppendRecord{body: "hello"}]
       }
 
-      frame = Shared.encode_framed(input)
+      assert {:ok, frame} = Shared.encode_framed(input)
 
       assert is_binary(frame)
       assert byte_size(frame) > 4
@@ -118,7 +118,7 @@ defmodule S2.S2S.SharedTest do
         records: [%S2.V1.AppendRecord{body: "test"}]
       }
 
-      frame = Shared.encode_framed(input)
+      assert {:ok, frame} = Shared.encode_framed(input)
 
       assert {:ok, decoded, <<>>} = Shared.decode_frame(frame, S2.V1.AppendInput)
       assert length(decoded.records) == 1

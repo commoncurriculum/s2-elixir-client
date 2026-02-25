@@ -1,4 +1,6 @@
 defmodule S2.Client do
+  require Logger
+
   @type t :: %__MODULE__{config: S2.Config.t(), req: Req.Request.t()}
 
   defstruct [:config, :req]
@@ -23,7 +25,11 @@ defmodule S2.Client do
         response: response_specs,
         opts: opts
       } = operation) do
-    client = opts[:server] || raise "server is required in opts"
+    client = opts[:server] || raise ArgumentError, "server is required in opts"
+
+    unless is_struct(client, __MODULE__) do
+      raise ArgumentError, "server must be an %S2.Client{}, got: #{inspect(client)}"
+    end
     query = Map.get(operation, :query, [])
     body = Map.get(operation, :body)
     basin = opts[:basin]
@@ -113,8 +119,12 @@ defmodule S2.Client do
       _ -> nil
     end)
     |> case do
-      {:decoded, result} -> result
-      nil -> value
+      {:decoded, result} ->
+        result
+
+      nil ->
+        Logger.debug("No matching union variant for value: #{inspect(value)}")
+        value
     end
   end
 
