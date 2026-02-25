@@ -67,7 +67,7 @@ defmodule MyApp.Chat.Message do
   embedded_schema do
     field :user, :string
     field :text, :string
-    field :ts, :utc_datetime
+    timestamps(inserted_at: :ts, updated_at: false, type: :utc_datetime)
   end
 
   def new(attrs) do
