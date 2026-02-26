@@ -29,6 +29,7 @@ defmodule S2.MixProject do
       {:jason, "~> 1.4"},
       {:protox, "~> 2.0"},
       {:mint, "~> 1.6"},
+      {:telemetry, "~> 1.0"},
       {:ecto, "~> 3.12", only: :test},
       {:oapi_generator, "~> 0.4.0", only: :dev, runtime: false}
     ]

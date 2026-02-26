@@ -67,7 +67,10 @@ defmodule S2.StoreIntegrationTest do
       basin: basin,
       serializer: TestS2.config().serializer,
       base_url: "http://localhost:4243",
-      token: nil
+      token: nil,
+      max_retries: 5,
+      base_delay: 100,
+      max_queue_size: 1000
     }
 
     start_supervised!({S2.Store.Supervisor, config})

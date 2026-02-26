@@ -30,12 +30,15 @@ Chat.append("general", Message.new(user: "bob", text: "hi alice!"))
 Chat.append("random", Message.new(user: "alice", text: "anyone here?"))
 
 # Listen to a room — tails the stream, calling your function for each message
-Chat.listen("general", fn %Message{} = msg ->
+{:ok, listener} = Chat.listen("general", fn %Message{} = msg ->
   IO.puts("[#{msg.ts}] #{msg.user}: #{msg.text}")
 end)
 # [2026-02-25T14:30:00Z] alice: hey everyone!
 # [2026-02-25T14:30:01Z] bob: hi alice!
 # ... stays open, prints new messages as they arrive
+
+# Stop listening when done
+Chat.stop_listener(listener)
 ```
 
 Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams. It handles chunking, framing, and deduplication automatically (see [Patterns](#patterns)), so you just work with your own types.
@@ -44,7 +47,10 @@ Here's the implementation. `S2.Store` manages connections, serialization, and se
 # config/config.exs
 config :my_app, MyApp.S2,
   base_url: "https://aws.s2.dev",
-  token: System.get_env("S2_TOKEN")
+  token: System.get_env("S2_TOKEN"),
+  max_retries: 5,       # reconnection attempts before giving up (default: 5)
+  base_delay: 500,      # base delay in ms for exponential backoff (default: 500)
+  max_queue_size: 1000   # pending appends per stream before {:error, :overloaded} (default: 1000)
 ```
 
 ```elixir
@@ -272,7 +278,9 @@ MyApp.S2 (Supervisor)
 - **Workers start lazily.** The first `append("chat/general", ...)` starts a worker for that stream. Subsequent appends reuse the open session — no handshake overhead.
 - **Listeners are independent.** Each `listen` call spawns a Task with its own connection and `ReadSession`, tailing the stream and calling your callback as messages arrive. This is required because Mint delivers TCP data to the owning process's mailbox.
 - **Control plane is shared.** `create_stream` and `delete_stream` go through a single `ControlPlane` GenServer using the JSON/Req client. These are infrequent operations that don't need per-stream isolation.
-- **Automatic reconnection.** If a TCP connection drops, both appends and listeners reconnect transparently. Append workers detect the failure on the next send, open a new connection and session, and retry — the caller just gets back `{:ok, ack}`. Listeners detect the drop when the read times out, then reconnect from the last successfully read sequence number so no messages are lost. The dedupe writer preserves its ID and sequence across reconnects, so if a message was written but the ack was lost, readers filter the duplicate automatically.
+- **Automatic reconnection with backoff.** If a TCP connection drops, both appends and listeners reconnect transparently with exponential backoff (configurable via `max_retries` and `base_delay`). Append workers detect the failure on the next send, open a new connection and session, and retry — the caller just gets back `{:ok, ack}`. Listeners detect the drop when the read times out, then reconnect from the last successfully read sequence number so no messages are lost. The dedupe writer preserves its ID and sequence across reconnects, so if a message was written but the ack was lost, readers filter the duplicate automatically.
+- **Backpressure.** Each stream worker monitors its mailbox depth. If pending appends exceed `max_queue_size`, the worker returns `{:error, :overloaded}` immediately instead of buffering without bound.
+- **Telemetry.** All operations emit `:telemetry` events under the `[:s2, :store, ...]` prefix — append start/stop/exception, reconnect attempts, and listener connections. Attach your own handlers for metrics, logging, or alerting.
 
 ### Protocol layers
 
@@ -294,10 +302,11 @@ MyApp.S2 (Supervisor)
 
 ### From this SDK
 
-- **Automatic reconnection.** If a TCP connection drops, appends reconnect and retry transparently. Listeners reconnect from the last read sequence number — no messages are lost.
+- **Automatic reconnection.** If a TCP connection drops, appends reconnect and retry transparently with exponential backoff. Listeners reconnect from the last read sequence number — no messages are lost.
 - **No duplicates.** Each writer stamps records with a unique ID and monotonic sequence. If a message was written but the ack was lost, the retry produces a duplicate on the wire, but readers filter it out automatically.
 - **Large message support.** Messages over 1 MiB are chunked on write and reassembled on read. You don't need to think about record size limits.
 - **Stream isolation.** Each stream gets its own process and connection. A slow or failed stream doesn't block others.
+- **Backpressure.** Stream workers reject appends with `{:error, :overloaded}` when the mailbox exceeds `max_queue_size`, preventing unbounded memory growth.
 - **Supervised workers.** Stream workers are managed by a DynamicSupervisor. If a worker crashes, the supervisor restarts it and the next append picks up where it left off.
 - **Validate on write, not on read.** Serializers cast fields on read without validation, so schema changes don't break deserialization of old messages.
 
