@@ -318,7 +318,23 @@ defmodule S2.S2S.ProxyTest do
 
       ToxiproxyEx.down!(proxy, fn ->
         assert {:error, _} = S2.S2S.Connection.open("http://localhost:#{proxy_port}")
+        # In Docker, the port proxy briefly accepts TCP connections before closing them,
+        # leaving stale {:tcp_closed, socket} messages in the mailbox. Drain them so
+        # ToxiproxyEx.down!/2's after-block (Proxy.enable via Tesla/Mint active mode)
+        # doesn't pick up a message for the wrong socket.
+        drain_tcp_messages()
       end)
+    end
+  end
+
+  defp drain_tcp_messages do
+    receive do
+      msg
+      when is_tuple(msg) and
+             elem(msg, 0) in [:tcp, :tcp_closed, :tcp_error, :ssl, :ssl_closed, :ssl_error] ->
+        drain_tcp_messages()
+    after
+      0 -> :ok
     end
   end
 end
