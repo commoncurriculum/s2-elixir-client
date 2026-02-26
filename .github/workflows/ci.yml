@@ -16,19 +16,17 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
 
-    services:
-      s2:
-        image: ghcr.io/s2-streamstore/s2-lite:latest
-        ports:
-          - 4243:4243
-      toxiproxy:
-        image: ghcr.io/shopify/toxiproxy:latest
-        ports:
-          - 8474:8474
-          - 19999:19999
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start test infrastructure
+        run: |
+          docker network create test-net
+          docker run -d --name s2 --network test-net -p 4243:80 ghcr.io/s2-streamstore/s2:latest lite
+          docker run -d --name toxiproxy --network test-net -p 8474:8474 -p 19999:19999 ghcr.io/shopify/toxiproxy:latest
+          # Wait for services to be ready
+          for i in $(seq 1 30); do curl -sf http://localhost:4243 > /dev/null 2>&1 && break || sleep 1; done
+          for i in $(seq 1 30); do curl -sf http://localhost:8474/version > /dev/null 2>&1 && break || sleep 1; done
 
       - uses: erlef/setup-beam@v1
         with:
@@ -49,7 +47,7 @@ jobs:
       - run: mix compile --warnings-as-errors
       - name: Run tests (including proxy tests)
         env:
-          S2_UPSTREAM: s2:4243
+          S2_UPSTREAM: s2:80
         run: mix coveralls --include proxy
 
   format:
