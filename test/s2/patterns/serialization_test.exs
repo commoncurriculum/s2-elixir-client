@@ -125,6 +125,23 @@ defmodule S2.Patterns.SerializationTest do
       assert msgs2 == []
     end
 
+    test "deserialization error returns error tuple in results" do
+      reader = Serialization.reader()
+
+      # Create a sequenced record with invalid JSON body but valid framing
+      # (single-record frame = no framing headers needed, just a raw body)
+      bad_record = %S2.V1.SequencedRecord{
+        seq_num: 0,
+        timestamp: 0,
+        headers: [],
+        body: "not valid json{"
+      }
+
+      {results, _reader} = Serialization.decode(reader, [bad_record], @json_serializer)
+      assert length(results) == 1
+      assert {:error, {:deserialization_error, %Jason.DecodeError{}}} = hd(results)
+    end
+
     test "incomplete chunked message returns nothing until complete" do
       writer = Serialization.writer()
       reader = Serialization.reader()

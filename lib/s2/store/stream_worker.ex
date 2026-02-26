@@ -139,8 +139,17 @@ defmodule S2.Store.StreamWorker do
   defp do_tail_loop(session, serializer, callback, config, reader, seq_num) do
     case S2.S2S.ReadSession.next_batch(session) do
       {:ok, batch, session} ->
-        {messages, reader} = Serialization.decode(reader, batch.records, serializer)
-        Enum.each(messages, callback)
+        {results, reader} = Serialization.decode(reader, batch.records, serializer)
+
+        Enum.each(results, fn
+          {:error, reason} ->
+            Logger.warning("S2 decode error: #{inspect(reason)}")
+            :telemetry.execute([:s2, :store, :decode_error], %{count: 1}, %{reason: reason})
+
+          message ->
+            callback.(message)
+        end)
+
         next_seq = next_seq_num(batch.records, seq_num)
         do_tail_loop(session, serializer, callback, config, reader, next_seq)
 

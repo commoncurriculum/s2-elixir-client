@@ -6,12 +6,20 @@ defmodule S2.S2S.CheckTailTest do
     client = test_client()
     basin = unique_basin_name("tail-test")
     stream = unique_stream_name("s")
+    empty_stream = unique_stream_name("empty")
 
     {:ok, _} = S2.Basins.create_basin(%S2.CreateBasinRequest{basin: basin}, server: client)
 
     {:ok, _} =
       S2.Streams.create_stream(
         %S2.CreateStreamRequest{stream: stream},
+        server: client,
+        basin: basin
+      )
+
+    {:ok, _} =
+      S2.Streams.create_stream(
+        %S2.CreateStreamRequest{stream: empty_stream},
         server: client,
         basin: basin
       )
@@ -32,7 +40,7 @@ defmodule S2.S2S.CheckTailTest do
       cleanup_basin(client, basin)
     end)
 
-    %{basin: basin, stream: stream}
+    %{basin: basin, stream: stream, empty_stream: empty_stream}
   end
 
   describe "call/3" do
@@ -50,6 +58,15 @@ defmodule S2.S2S.CheckTailTest do
 
       assert {:error, %S2.Error{}, _conn} =
                S2.S2S.CheckTail.call(conn, basin, "nonexistent-stream")
+    end
+
+    test "returns seq_num 0 for empty stream", %{basin: basin, empty_stream: empty_stream} do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+
+      assert {:ok, %S2.V1.StreamPosition{} = pos, _conn} =
+               S2.S2S.CheckTail.call(conn, basin, empty_stream)
+
+      assert pos.seq_num == 0
     end
 
     test "returns error for nonexistent basin" do

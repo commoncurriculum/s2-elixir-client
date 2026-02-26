@@ -42,6 +42,22 @@ defmodule S2.Patterns.Serialization do
     {%S2.V1.AppendInput{records: stamped}, writer}
   end
 
+  @doc """
+  Decode sequenced records back into terms with dedup + reassembly.
+
+  Returns a list of results and the updated reader. Each result is either
+  a successfully deserialized term or `{:error, {:deserialization_error, exception}}`
+  if the deserializer raised. Assembler errors produce
+  `{:error, {:assembly_error, reason}}`.
+
+  Callers should pattern match on results to handle errors:
+
+      {results, reader} = Serialization.decode(reader, records, serializer)
+      Enum.each(results, fn
+        {:error, reason} -> Logger.warning("decode error: \#{inspect(reason)}")
+        message -> process(message)
+      end)
+  """
   @spec decode(reader(), [S2.V1.SequencedRecord.t()], serializer()) :: {[term()], reader()}
   def decode(reader, records, serializer) do
     {messages, reader} =
@@ -55,18 +71,28 @@ defmodule S2.Patterns.Serialization do
 
             case Framing.Assembler.add(reader.assembler, record) do
               {:ok, data, assembler} ->
-                message = serializer.deserialize.(data)
-                {msgs ++ [message], %{reader | assembler: assembler}}
+                reader = %{reader | assembler: assembler}
+
+                case safe_deserialize(serializer, data) do
+                  {:ok, message} -> {msgs ++ [message], reader}
+                  {:error, _} = err -> {msgs ++ [err], reader}
+                end
 
               {:incomplete, assembler} ->
                 {msgs, %{reader | assembler: assembler}}
 
-              {:error, _reason} ->
-                {msgs, reader}
+              {:error, reason} ->
+                {msgs ++ [{:error, {:assembly_error, reason}}], reader}
             end
         end
       end)
 
     {messages, reader}
+  end
+
+  defp safe_deserialize(serializer, data) do
+    {:ok, serializer.deserialize.(data)}
+  rescue
+    e -> {:error, {:deserialization_error, e}}
   end
 end

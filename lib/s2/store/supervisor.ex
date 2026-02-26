@@ -65,10 +65,16 @@ defmodule S2.Store.Supervisor do
       S2.Store.Telemetry.event([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
 
-      {seq_num, conn} = resolve_start_position(conn, config, stream, opts)
+      case resolve_start_position(conn, config, stream, opts) do
+        {:ok, seq_num, conn} ->
+          {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout)
+          S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
 
-      {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout)
-      S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
+        {:error, reason, _conn} ->
+          require Logger
+          Logger.error("S2 listener failed to resolve start position for #{stream}: #{inspect(reason)}")
+          {:error, reason}
+      end
     end)
   end
 
@@ -85,12 +91,15 @@ defmodule S2.Store.Supervisor do
     case Keyword.get(opts, :from, 0) do
       :tail ->
         case S2.S2S.CheckTail.call(conn, config.basin, stream, token: config.token) do
-          {:ok, position, conn} -> {position.seq_num, conn}
-          {:error, _reason, conn} -> {0, conn}
+          {:ok, position, conn} -> {:ok, position.seq_num, conn}
+          {:error, reason, conn} -> {:error, reason, conn}
         end
 
-      seq_num when is_integer(seq_num) ->
-        {seq_num, conn}
+      seq_num when is_integer(seq_num) and seq_num >= 0 ->
+        {:ok, seq_num, conn}
+
+      other ->
+        {:error, {:invalid_from, other}, conn}
     end
   end
 
