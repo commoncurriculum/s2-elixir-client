@@ -50,7 +50,7 @@ jobs:
       - name: Run tests (including proxy tests)
         env:
           S2_UPSTREAM: s2:4243
-        run: mix test --include proxy --cover
+        run: mix coveralls --include proxy
 
   format:
     name: Format

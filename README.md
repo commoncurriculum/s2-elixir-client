@@ -320,6 +320,12 @@ MyApp.S2 (Supervisor)
 - **Supervised workers.** Stream workers are managed by a DynamicSupervisor. If a worker crashes, the supervisor restarts it and the next append picks up where it left off.
 - **Validate on write, not on read.** Serializers cast fields on read without validation, so schema changes don't break deserialization of old messages.
 
+## Testing
+
+98.8% test coverage (with Toxiproxy network fault tests). The remaining uncovered lines are exhaustive pattern match arms that can't be triggered — see `test/test_helper.exs` for details.
+
+Coverage threshold is set to 95% — CI fails if coverage drops below that.
+
 ## License
 
 MIT
