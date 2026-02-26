@@ -2,7 +2,7 @@ defmodule S2.S2S.ReadLogicTest do
   use ExUnit.Case, async: true
 
   alias S2.S2S.Read
-  alias S2.S2S.Shared
+
 
   defp make_read_batch_frame(records) do
     batch = %S2.V1.ReadBatch{records: records}

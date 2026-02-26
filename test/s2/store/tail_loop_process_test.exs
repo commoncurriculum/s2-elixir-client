@@ -188,7 +188,7 @@ defmodule S2.Store.TailLoopProcessTest do
     Process.sleep(500)
   end
 
-  test "end_of_stream returns :ok", %{config: config, basin: basin, stream: stream} do
+  test "end_of_stream returns :ok", %{config: config, basin: basin, stream: _stream} do
     parent = self()
 
     # Create an empty stream (no records) and read from it
