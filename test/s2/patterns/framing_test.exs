@@ -112,6 +112,23 @@ defmodule S2.Patterns.RecordFramingTest do
                Framing.Assembler.add(assembler, to_sequenced(hd(records2), 1))
     end
 
+    test "returns error on frame size mismatch" do
+      # Create a multi-chunk message, then tamper with one chunk's body
+      max = Chunking.max_chunk_bytes()
+      data = :crypto.strong_rand_bytes(max + 100)
+      records = Framing.frame(data)
+      [first, second] = records
+
+      # Replace second chunk body with wrong-size data
+      tampered = %{second | body: "short"}
+
+      assembler = Framing.Assembler.new()
+      {:incomplete, assembler} = Framing.Assembler.add(assembler, to_sequenced(first, 0))
+
+      assert {:error, {:frame_size_mismatch, _}} =
+               Framing.Assembler.add(assembler, to_sequenced(tampered, 1))
+    end
+
     test "multiple messages in sequence" do
       assembler = Framing.Assembler.new()
 

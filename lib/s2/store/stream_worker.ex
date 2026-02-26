@@ -217,7 +217,8 @@ defmodule S2.Store.StreamWorker do
     Process.monitor(pid)
   end
 
-  defp check_backpressure(state) do
+  @doc false
+  def check_backpressure(state) do
     {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
 
     if queue_len > state.config.max_queue_size do
@@ -227,7 +228,8 @@ defmodule S2.Store.StreamWorker do
     end
   end
 
-  defp safe_prepare_batch(writer, messages, serializer) do
+  @doc false
+  def safe_prepare_batch(writer, messages, serializer) do
     {all_records, writer} =
       Enum.flat_map_reduce(messages, writer, fn msg, w ->
         {input, w} = Serialization.prepare(w, msg, serializer)
@@ -239,7 +241,8 @@ defmodule S2.Store.StreamWorker do
     e -> {:error, e}
   end
 
-  defp safe_prepare(writer, message, serializer) do
+  @doc false
+  def safe_prepare(writer, message, serializer) do
     {input, writer} = Serialization.prepare(writer, message, serializer)
     {:ok, input, writer}
   rescue

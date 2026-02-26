@@ -17,16 +17,11 @@ defmodule S2.MixProject do
       description: "Elixir client for the S2 durable stream API",
       source_url: @source_url,
       homepage_url: "https://s2.dev",
-      test_coverage: [
-        ignore_modules: [
-          # Generated protobuf structs
-          ~r/^S2\.V1\./,
-          # Generated API schema structs (request/response types)
-          ~r/^S2\.(?:AccessToken|Accumulation|Basin|Create|Delete|Gauge|Issue|Label|List|Metric|Permitted|ReadWrite|Scalar|Stream|Timestamping)/,
-          S2.Proto.Messages,
-          S2.ErrorInfo
-        ],
-        summary: [threshold: 84]
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test
       ],
       docs: docs(),
       package: package()
@@ -110,6 +105,7 @@ defmodule S2.MixProject do
       {:mint, "~> 1.6"},
       {:telemetry, "~> 1.0"},
       {:ezstd, "~> 1.1", optional: true},
+      {:excoveralls, "~> 0.18", only: :test},
       {:ecto, "~> 3.12", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:oapi_generator, "~> 0.4.0", only: :dev, runtime: false}

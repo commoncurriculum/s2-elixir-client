@@ -104,5 +104,35 @@ defmodule S2.S2S.ReadSessionLogicTest do
 
       assert closed_session.closed == true
     end
+
+    test "returns decode error for bad protobuf in frame" do
+      session = make_session()
+      frame = S2.S2S.Framing.encode("not valid protobuf")
+      responses = [{:data, session.request_ref, frame}]
+
+      assert {:error, {:decode_error, _}, closed_session} =
+               ReadSession.handle_batch_response({:ok, :new_conn, responses}, session, <<>>)
+
+      assert closed_session.closed == true
+    end
+  end
+
+  describe "next_batch/1 with buffered decode error" do
+    test "returns error when buffered data contains bad frame" do
+      # Build a session with invalid protobuf data already buffered
+      frame = S2.S2S.Framing.encode("not valid protobuf")
+
+      session = %ReadSession{
+        conn: :fake_conn,
+        request_ref: make_ref(),
+        owner_pid: self(),
+        recv_timeout: 5000,
+        closed: false,
+        data: frame
+      }
+
+      assert {:error, {:decode_error, _}, closed_session} = ReadSession.next_batch(session)
+      assert closed_session.closed == true
+    end
   end
 end

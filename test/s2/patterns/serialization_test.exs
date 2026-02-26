@@ -142,6 +142,26 @@ defmodule S2.Patterns.SerializationTest do
       assert {:error, {:deserialization_error, %Jason.DecodeError{}}} = hd(results)
     end
 
+    test "assembly error returns error tuple when unexpected record arrives" do
+      reader = Serialization.reader()
+      max = Chunking.max_chunk_bytes()
+
+      # Create two multi-chunk messages
+      data1 = :crypto.strong_rand_bytes(max + 100)
+      records1 = S2.Patterns.RecordFraming.frame(data1)
+      data2 = :crypto.strong_rand_bytes(max + 100)
+      records2 = S2.Patterns.RecordFraming.frame(data2)
+
+      # Feed first chunk of msg1, then first chunk of msg2 (unexpected new frame start)
+      seq_records = [
+        to_sequenced_records([hd(records1)], 0),
+        to_sequenced_records([hd(records2)], 1)
+      ] |> List.flatten()
+
+      {results, _reader} = Serialization.decode(reader, seq_records, @json_serializer)
+      assert Enum.any?(results, &match?({:error, {:assembly_error, :unexpected_record}}, &1))
+    end
+
     test "incomplete chunked message returns nothing until complete" do
       writer = Serialization.writer()
       reader = Serialization.reader()

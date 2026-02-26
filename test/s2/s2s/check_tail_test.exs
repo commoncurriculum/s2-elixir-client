@@ -75,6 +75,14 @@ defmodule S2.S2S.CheckTailTest do
       assert {:error, %S2.Error{}, _conn} =
                S2.S2S.CheckTail.call(conn, "nonexistent-basin", "some-stream")
     end
+
+    test "returns error on closed connection" do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+      {:ok, conn} = Mint.HTTP2.close(conn)
+
+      assert {:error, _reason, _conn} =
+               S2.S2S.CheckTail.call(conn, "basin", "stream")
+    end
   end
 
   describe "parse_tail_response/2" do

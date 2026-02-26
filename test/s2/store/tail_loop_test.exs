@@ -29,4 +29,25 @@ defmodule S2.Store.TailLoopTest do
       refute Map.has_key?(config, :extra_field)
     end
   end
+
+  describe "next_seq_num/2" do
+    test "returns seq_num unchanged for empty records" do
+      assert TailLoop.next_seq_num([], 5) == 5
+    end
+
+    test "returns last record's seq_num + 1" do
+      records = [
+        %S2.V1.SequencedRecord{seq_num: 0, body: "a"},
+        %S2.V1.SequencedRecord{seq_num: 1, body: "b"},
+        %S2.V1.SequencedRecord{seq_num: 2, body: "c"}
+      ]
+
+      assert TailLoop.next_seq_num(records, 0) == 3
+    end
+
+    test "ignores previous seq_num when records present" do
+      records = [%S2.V1.SequencedRecord{seq_num: 10, body: "x"}]
+      assert TailLoop.next_seq_num(records, 999) == 11
+    end
+  end
 end

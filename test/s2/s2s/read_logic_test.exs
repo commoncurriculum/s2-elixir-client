@@ -83,7 +83,6 @@ defmodule S2.S2S.ReadLogicTest do
     end
 
     test "returns :continue on unknown message" do
-      ref = make_ref()
       acc = %{status: nil, data: <<>>}
 
       assert {:continue, :conn, ^acc} =
@@ -96,6 +95,28 @@ defmodule S2.S2S.ReadLogicTest do
       acc = %{status: nil, data: <<>>}
 
       assert {:error, :incomplete_frame, :new_conn} =
+               Read.handle_first_batch_response({:ok, :new_conn, responses}, ref, acc)
+    end
+
+    test "returns decode error when status 200 but frame contains bad protobuf" do
+      ref = make_ref()
+      # Build a non-terminal frame with garbage protobuf data
+      frame = S2.S2S.Framing.encode("not valid protobuf")
+      responses = [{:status, ref, 200}, {:data, ref, frame}]
+      acc = %{status: nil, data: <<>>}
+
+      assert {:error, {:decode_error, _}, :new_conn} =
+               Read.handle_first_batch_response({:ok, :new_conn, responses}, ref, acc)
+    end
+
+    test "returns error from handle_complete_response with decode error" do
+      ref = make_ref()
+      # Build a non-terminal frame with garbage protobuf, with done signal
+      frame = S2.S2S.Framing.encode("not valid protobuf")
+      responses = [{:status, ref, 200}, {:data, ref, frame}, {:done, ref}]
+      acc = %{status: nil, data: <<>>}
+
+      assert {:error, {:decode_error, _}, :new_conn} =
                Read.handle_first_batch_response({:ok, :new_conn, responses}, ref, acc)
     end
   end

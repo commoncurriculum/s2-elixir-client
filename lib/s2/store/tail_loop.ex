@@ -113,9 +113,10 @@ defmodule S2.Store.TailLoop do
     end)
   end
 
-  defp next_seq_num([], seq_num), do: seq_num
+  @doc false
+  def next_seq_num([], seq_num), do: seq_num
 
-  defp next_seq_num(records, _seq_num) do
+  def next_seq_num(records, _seq_num) do
     last = List.last(records)
     last.seq_num + 1
   end

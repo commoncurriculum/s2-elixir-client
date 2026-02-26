@@ -45,7 +45,8 @@ defmodule S2.Store.Listener do
     end)
   end
 
-  defp resolve_start_position(conn, config, stream, opts) do
+  @doc false
+  def resolve_start_position(conn, config, stream, opts) do
     case Keyword.get(opts, :from, 0) do
       :tail ->
         case S2.S2S.CheckTail.call(conn, config.basin, stream, token: config.token) do

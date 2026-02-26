@@ -39,9 +39,21 @@ defmodule S2.ConfigTest do
       end
     end
 
+    test "raises on URL with empty host" do
+      assert_raise ArgumentError, ~r/host/, fn ->
+        S2.Config.new(base_url: "http:///path")
+      end
+    end
+
     test "strips trailing slash from base_url" do
       config = S2.Config.new(base_url: "http://localhost:4243/")
       assert config.base_url == "http://localhost:4243"
+    end
+
+    test "raises on URL with nil host" do
+      assert_raise ArgumentError, ~r/host/, fn ->
+        S2.Config.new(base_url: "http:")
+      end
     end
 
     test "raises on ftp scheme" do

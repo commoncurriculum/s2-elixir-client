@@ -59,6 +59,15 @@ defmodule S2.Patterns.ChunkingTest do
     assert IO.iodata_to_binary(chunks) == data
   end
 
+  test "data exactly divisible by max_chunk_bytes produces exact chunks" do
+    max = Chunking.max_chunk_bytes()
+    data = :binary.copy(<<0>>, max * 2)
+    chunks = Chunking.chunk(data)
+    assert length(chunks) == 2
+    assert byte_size(hd(chunks)) == max
+    assert byte_size(List.last(chunks)) == max
+  end
+
   test "max_chunk_bytes is less than 1 MiB" do
     # S2 record limit is 1 MiB; chunk body must leave room for headers
     assert Chunking.max_chunk_bytes() < 1_048_576

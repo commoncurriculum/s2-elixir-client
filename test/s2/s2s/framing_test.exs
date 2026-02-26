@@ -108,6 +108,12 @@ defmodule S2.S2S.FramingTest do
       assert {:error, {:decompression_error, :gzip, _}} = Framing.decode(frame)
     end
 
+    test "returns error for corrupted zstd data" do
+      # Manually construct a frame with zstd flag but non-zstd body
+      frame = <<5::24-big, 0x20, "data">>
+      assert {:error, {:decompression_error, :zstd, _}} = Framing.decode(frame)
+    end
+
     test "decodes multiple concatenated frames" do
       frame1 = Framing.encode("first")
       frame2 = Framing.encode("second")

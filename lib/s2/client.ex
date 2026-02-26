@@ -99,7 +99,8 @@ defmodule S2.Client do
     end
   end
 
-  defp handle_response(status, body, response_specs) do
+  @doc false
+  def handle_response(status, body, response_specs) do
     case List.keyfind(response_specs, status, 0) do
       {_, :null} ->
         :ok
@@ -116,17 +117,19 @@ defmodule S2.Client do
     end
   end
 
-  defp to_error(_status, %S2.Error{} = error), do: error
+  @doc false
+  def to_error(_status, %S2.Error{} = error), do: error
 
-  defp to_error(status, %{code: code, message: message}) do
+  def to_error(status, %{code: code, message: message}) do
     %S2.Error{status: status, code: code, message: message}
   end
 
-  defp to_error(status, other) do
+  def to_error(status, other) do
     %S2.Error{status: status, message: inspect(other)}
   end
 
-  defp decode_schema(body, schema_mod) when is_map(body) do
+  @doc false
+  def decode_schema(body, schema_mod) when is_map(body) do
     fields = schema_mod.__fields__(:t)
 
     attrs =
@@ -139,20 +142,21 @@ defmodule S2.Client do
     struct(schema_mod, attrs)
   end
 
-  defp decode_schema(nil, _schema_mod), do: nil
-  defp decode_schema(body, _schema_mod), do: body
+  def decode_schema(nil, _schema_mod), do: nil
+  def decode_schema(body, _schema_mod), do: body
 
-  defp decode_field(nil, _type), do: nil
+  @doc false
+  def decode_field(nil, _type), do: nil
 
-  defp decode_field(values, [{schema_mod, :t}]) when is_list(values) do
+  def decode_field(values, [{schema_mod, :t}]) when is_list(values) do
     Enum.map(values, &decode_schema(&1, schema_mod))
   end
 
-  defp decode_field(value, {schema_mod, :t}) when is_map(value) and is_atom(schema_mod) do
+  def decode_field(value, {schema_mod, :t}) when is_map(value) and is_atom(schema_mod) do
     decode_schema(value, schema_mod)
   end
 
-  defp decode_field(value, {:union, variants}) do
+  def decode_field(value, {:union, variants}) do
     Enum.find_value(variants, fn
       :null when is_nil(value) ->
         {:decoded, nil}
@@ -176,17 +180,18 @@ defmodule S2.Client do
     end
   end
 
-  defp decode_field(value, _type), do: value
+  def decode_field(value, _type), do: value
 
-  defp encode_body(%{__struct__: _} = struct) do
+  @doc false
+  def encode_body(%{__struct__: _} = struct) do
     struct
     |> Map.from_struct()
     |> Enum.reject(fn {_k, v} -> is_nil(v) end)
     |> Map.new(fn {k, v} -> {k, encode_body(v)} end)
   end
 
-  defp encode_body(values) when is_list(values), do: Enum.map(values, &encode_body/1)
-  defp encode_body(body), do: body
+  def encode_body(values) when is_list(values), do: Enum.map(values, &encode_body/1)
+  def encode_body(body), do: body
 
   defp base_headers(%S2.Config{token: nil}), do: []
 

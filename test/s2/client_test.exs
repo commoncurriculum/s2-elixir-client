@@ -11,6 +11,17 @@ defmodule S2.ClientTest do
     end
   end
 
+  describe "new/1 with token" do
+    test "creates client with auth headers when token provided" do
+      config = S2.Config.new(base_url: "http://localhost:4243", token: "my-token")
+      client = S2.Client.new(config)
+      assert %S2.Client{} = client
+      # Verify the auth header is set on the Req instance
+      headers = client.req.headers
+      assert {"authorization", ["Bearer my-token"]} in headers
+    end
+  end
+
   describe "request/1 validation" do
     test "raises without server opt" do
       assert_raise ArgumentError, ~r/server is required/, fn ->
@@ -26,7 +37,7 @@ defmodule S2.ClientTest do
   end
 
   describe "request/1 error handling" do
-    test "wraps transport errors in S2.Error" do
+    test "wraps exception transport errors in S2.Error" do
       config = S2.Config.new(base_url: "http://localhost:1")
       client = S2.Client.new(config)
 

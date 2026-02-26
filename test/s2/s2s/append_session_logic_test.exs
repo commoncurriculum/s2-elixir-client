@@ -111,6 +111,47 @@ defmodule S2.S2S.AppendSessionLogicTest do
     end
   end
 
+  describe "receive_ack buffered data paths" do
+    test "returns ack when accumulated data contains complete frame" do
+      # Build a framed AppendAck as accumulated data (the acc parameter)
+      ack = %S2.V1.AppendAck{
+        start: %S2.V1.StreamPosition{seq_num: 0, timestamp: 100},
+        end: %S2.V1.StreamPosition{seq_num: 1, timestamp: 100}
+      }
+
+      {:ok, frame} = S2.S2S.Shared.encode_framed(ack)
+      session = make_session()
+
+      # Pass the frame as acc (accumulated data from previous receive loop iterations)
+      # and empty response data — the decoder should find the ack in acc
+      result =
+        AppendSession.handle_ack_response(
+          {:ok, :new_conn, [{:data, session.request_ref, <<>>}]},
+          session,
+          frame
+        )
+
+      assert {:ok, %S2.V1.AppendAck{}, _session} = result
+    end
+
+    test "returns error when accumulated data contains terminal frame" do
+      json = Jason.encode!(%{"code" => "err", "message" => "fail"})
+      body = <<400::16-big>> <> json
+      frame = S2.S2S.Framing.encode(body, terminal: true)
+
+      session = make_session()
+
+      result =
+        AppendSession.handle_ack_response(
+          {:ok, :new_conn, [{:data, session.request_ref, frame}]},
+          session,
+          <<>>
+        )
+
+      assert {:error, %S2.Error{status: 400}, _session} = result
+    end
+  end
+
   describe "handle_drain_response/2" do
     test "returns :ok when done signal received" do
       session = make_session()

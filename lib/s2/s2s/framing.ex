@@ -122,7 +122,10 @@ defmodule S2.S2S.Framing do
 
   defp decompress(body, :zstd) do
     if @ezstd_available do
-      {:ok, :ezstd.decompress(body)}
+      case :ezstd.decompress(body) do
+        {:error, reason} -> {:error, {:decompression_error, :zstd, reason}}
+        decompressed when is_binary(decompressed) -> {:ok, decompressed}
+      end
     else
       {:error,
        {:missing_dependency, :ezstd, "add {:ezstd, \"~> 1.1\"} to your deps for zstd support"}}
