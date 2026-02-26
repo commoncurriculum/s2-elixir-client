@@ -2,8 +2,6 @@ defmodule S2.Store.Supervisor do
   @moduledoc false
   use Supervisor
 
-  require Logger
-
   def start_link(config) do
     Supervisor.start_link(__MODULE__, config, name: config.store)
   end
@@ -51,72 +49,13 @@ defmodule S2.Store.Supervisor do
 
   def listen(store, stream, callback, opts) do
     config = get_config(store)
-    serializer = Keyword.get(opts, :serializer, config.serializer)
-
-    listener_config = %{
-      base_url: config.base_url,
-      token: config.token,
-      basin: config.basin,
-      stream: stream,
-      max_retries: config.max_retries,
-      base_delay: config.base_delay,
-      recv_timeout: config.recv_timeout
-    }
-
-    Task.Supervisor.start_child(task_sup_name(store), fn ->
-      :telemetry.execute(
-        [:s2, :store, :listener, :connect],
-        %{system_time: System.system_time()},
-        %{stream: stream}
-      )
-
-      with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-           {:ok, seq_num, conn} <- resolve_start_position(conn, config, stream, opts),
-           {:ok, session} <-
-             S2.S2S.ReadSession.open(conn, config.basin, stream,
-               seq_num: seq_num,
-               token: config.token,
-               recv_timeout: config.recv_timeout
-             ) do
-        S2.Store.TailLoop.run(session, serializer, callback, listener_config)
-      else
-        {:error, reason, _conn} -> listener_start_failed(stream, reason)
-        {:error, reason} -> listener_start_failed(stream, reason)
-      end
-    end)
+    S2.Store.Listener.start(task_sup_name(store), config, stream, callback, opts)
   end
 
   def stop_listener(store, pid) when is_pid(pid) do
     case Task.Supervisor.terminate_child(task_sup_name(store), pid) do
       :ok -> :ok
       {:error, :not_found} -> {:error, :not_found}
-    end
-  end
-
-  defp listener_start_failed(stream, reason) do
-    Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
-
-    :telemetry.execute([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{
-      stream: stream,
-      reason: reason
-    })
-
-    {:error, reason}
-  end
-
-  defp resolve_start_position(conn, config, stream, opts) do
-    case Keyword.get(opts, :from, 0) do
-      :tail ->
-        case S2.S2S.CheckTail.call(conn, config.basin, stream, token: config.token) do
-          {:ok, position, conn} -> {:ok, position.seq_num, conn}
-          {:error, reason, conn} -> {:error, reason, conn}
-        end
-
-      seq_num when is_integer(seq_num) and seq_num >= 0 ->
-        {:ok, seq_num, conn}
-
-      other ->
-        {:error, {:invalid_from, other}, conn}
     end
   end
 

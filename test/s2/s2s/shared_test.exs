@@ -212,19 +212,25 @@ defmodule S2.S2S.SharedTest do
     end
   end
 
-  describe "done?/1" do
-    test "returns true when :done is present" do
+  describe "done?/2" do
+    test "returns true when :done is present for matching ref" do
       ref = make_ref()
-      assert Shared.done?([{:data, ref, "hi"}, {:done, ref}])
+      assert Shared.done?([{:data, ref, "hi"}, {:done, ref}], ref)
     end
 
     test "returns false when :done is absent" do
       ref = make_ref()
-      refute Shared.done?([{:data, ref, "hi"}])
+      refute Shared.done?([{:data, ref, "hi"}], ref)
     end
 
     test "returns false for empty list" do
-      refute Shared.done?([])
+      refute Shared.done?([], make_ref())
+    end
+
+    test "returns false when :done is for a different ref" do
+      ref = make_ref()
+      other_ref = make_ref()
+      refute Shared.done?([{:done, other_ref}], ref)
     end
   end
 end

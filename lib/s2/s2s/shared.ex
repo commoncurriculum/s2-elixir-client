@@ -89,11 +89,11 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
-  Check whether any response is a `:done` signal.
+  Check whether any response is a `:done` signal for the given request ref.
   """
-  @spec done?([term()]) :: boolean()
-  def done?(responses) do
-    Enum.any?(responses, &match?({:done, _}, &1))
+  @spec done?([term()], reference()) :: boolean()
+  def done?(responses, request_ref) do
+    Enum.any?(responses, &match?({:done, ^request_ref}, &1))
   end
 
   @doc """
@@ -297,4 +297,69 @@ defmodule S2.S2S.Shared do
     do: {:error, :buffer_overflow}
 
   def check_buffer_size(_data), do: :ok
+
+  @doc """
+  Wait for the server to respond with HTTP status headers on a streaming request.
+
+  Used by both AppendSession and ReadSession to establish sessions. Returns
+  `{:ok, status, initial_data, conn}` or `{:error, reason, conn}`.
+  """
+  @spec wait_for_headers(conn, reference(), non_neg_integer()) ::
+          {:ok, integer(), binary(), conn} | {:error, term(), conn}
+  def wait_for_headers(conn, request_ref, recv_timeout) do
+    do_wait_for_headers(conn, request_ref, deadline(recv_timeout))
+  end
+
+  defp do_wait_for_headers(conn, request_ref, dl) do
+    receive do
+      message ->
+        case Mint.HTTP2.stream(conn, message) do
+          {:ok, conn, responses} ->
+            {status, data} = extract_status_and_data(responses, request_ref)
+
+            cond do
+              status != nil -> {:ok, status, data, conn}
+              true -> do_wait_for_headers(conn, request_ref, dl)
+            end
+
+          {:error, conn, _error, _responses} ->
+            {:error, :stream_error, conn}
+
+          :unknown ->
+            do_wait_for_headers(conn, request_ref, dl)
+        end
+    after
+      remaining(dl) -> {:error, :timeout, conn}
+    end
+  end
+
+  defp extract_status_and_data(responses, request_ref) do
+    Enum.reduce(responses, {nil, <<>>}, fn
+      {:status, ^request_ref, status}, {_s, d} -> {status, d}
+      {:data, ^request_ref, data}, {s, d} -> {s, d <> data}
+      _, acc -> acc
+    end)
+  end
+
+  @doc """
+  Open an S2S connection and then open a session on it.
+
+  Normalizes the error tuples from Connection.open and Session.open into
+  a consistent `{:ok, session}` or `{:error, reason}` result. The `open_fn`
+  receives the connection and should return `{:ok, session}` or `{:error, reason, conn}`.
+  """
+  @spec open_session(String.t(), keyword(), (conn ->
+                                               {:ok, term()}
+                                               | {:error, term()}
+                                               | {:error, term(), conn})) ::
+          {:ok, term()} | {:error, term()}
+  def open_session(base_url, conn_opts, open_fn) do
+    with {:ok, conn} <- S2.S2S.Connection.open(base_url, conn_opts),
+         {:ok, session} <- open_fn.(conn) do
+      {:ok, session}
+    else
+      {:error, reason, _conn} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 end

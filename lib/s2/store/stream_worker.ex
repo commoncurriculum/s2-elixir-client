@@ -56,9 +56,12 @@ defmodule S2.Store.StreamWorker do
   def terminate(_reason, _state), do: :ok
 
   @impl true
-  def handle_call(_msg, _from, %{connector: %{status: status}} = state)
-      when status in [:reconnecting, :failed] do
+  def handle_call(_msg, _from, %{connector: %{status: :reconnecting}} = state) do
     {:reply, {:error, :reconnecting}, state}
+  end
+
+  def handle_call(_msg, _from, %{connector: %{status: :failed}} = state) do
+    {:reply, {:error, :connection_failed}, state}
   end
 
   def handle_call({:append, message, serializer}, _from, state) do
@@ -244,17 +247,12 @@ defmodule S2.Store.StreamWorker do
   end
 
   defp open_session(config, stream) do
-    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <-
-           S2.S2S.AppendSession.open(conn, config.basin, stream,
-             token: config.token,
-             recv_timeout: config.recv_timeout,
-             compression: config.compression
-           ) do
-      {:ok, session}
-    else
-      {:error, reason, _conn} -> {:error, reason}
-      {:error, reason} -> {:error, reason}
-    end
+    S2.S2S.Shared.open_session(config.base_url, [token: config.token], fn conn ->
+      S2.S2S.AppendSession.open(conn, config.basin, stream,
+        token: config.token,
+        recv_timeout: config.recv_timeout,
+        compression: config.compression
+      )
+    end)
   end
 end

@@ -1,4 +1,4 @@
-defmodule S2.Patterns.Framing do
+defmodule S2.Patterns.RecordFraming do
   @moduledoc false
 
   alias S2.Patterns.{Chunking, Constants}

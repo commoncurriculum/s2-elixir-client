@@ -1,7 +1,7 @@
-defmodule S2.Patterns.FramingTest do
+defmodule S2.Patterns.RecordFramingTest do
   use ExUnit.Case, async: true
 
-  alias S2.Patterns.Framing
+  alias S2.Patterns.RecordFraming, as: Framing
   alias S2.Patterns.Chunking
   alias S2.Patterns.Constants
 

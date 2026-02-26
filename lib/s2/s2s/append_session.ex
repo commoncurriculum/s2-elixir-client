@@ -125,48 +125,17 @@ defmodule S2.S2S.AppendSession do
     end
   end
 
-  # Wait for the server to respond with 200 headers, establishing the session.
-  # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
-  # can always recover the connection.
   defp wait_for_headers(session) do
-    wait_for_headers(session, Shared.deadline(session.recv_timeout))
-  end
+    case Shared.wait_for_headers(session.conn, session.request_ref, session.recv_timeout) do
+      {:ok, 200, _data, conn} ->
+        {:ok, %{session | conn: conn}}
 
-  defp wait_for_headers(session, dl) do
-    receive do
-      message ->
-        case Mint.HTTP2.stream(session.conn, message) do
-          {:ok, conn, responses} ->
-            session = %{session | conn: conn}
+      {:ok, status, _data, conn} ->
+        {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, conn}
 
-            case check_session_status(responses, session.request_ref) do
-              {:ok, 200} ->
-                {:ok, session}
-
-              {:ok, status} ->
-                {:error, %S2.Error{status: status, message: "unexpected status #{status}"},
-                 session.conn}
-
-              :continue ->
-                wait_for_headers(session, dl)
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, conn}
-
-          :unknown ->
-            wait_for_headers(session, dl)
-        end
-    after
-      Shared.remaining(dl) -> {:error, :timeout, session.conn}
+      {:error, reason, conn} ->
+        {:error, reason, conn}
     end
-  end
-
-  defp check_session_status(responses, request_ref) do
-    Enum.reduce_while(responses, :continue, fn
-      {:status, ^request_ref, status}, _acc -> {:halt, {:ok, status}}
-      _, acc -> {:cont, acc}
-    end)
   end
 
   defp receive_ack(session) do
@@ -199,7 +168,7 @@ defmodule S2.S2S.AppendSession do
                 {:error, :buffer_overflow, close_session(%{session | data: all_data})}
 
               :ok ->
-                done? = Shared.done?(responses)
+                done? = Shared.done?(responses, session.request_ref)
 
                 case Shared.decode_frame(all_data, S2.V1.AppendAck) do
                   {:ok, ack, rest} ->
@@ -241,7 +210,7 @@ defmodule S2.S2S.AppendSession do
           {:ok, conn, responses} ->
             session = %{session | conn: conn}
 
-            if Shared.done?(responses) do
+            if Shared.done?(responses, session.request_ref) do
               {:ok, session}
             else
               drain_final_response(session, dl)

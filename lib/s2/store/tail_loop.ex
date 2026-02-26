@@ -96,18 +96,13 @@ defmodule S2.Store.TailLoop do
   end
 
   defp reconnect(config, seq_num) do
-    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <-
-           S2.S2S.ReadSession.open(conn, config.basin, config.stream,
-             seq_num: seq_num,
-             token: config.token,
-             recv_timeout: config.recv_timeout
-           ) do
-      {:ok, session}
-    else
-      {:error, reason, _conn} -> {:error, reason}
-      {:error, reason} -> {:error, reason}
-    end
+    S2.S2S.Shared.open_session(config.base_url, [token: config.token], fn conn ->
+      S2.S2S.ReadSession.open(conn, config.basin, config.stream,
+        seq_num: seq_num,
+        token: config.token,
+        recv_timeout: config.recv_timeout
+      )
+    end)
   end
 
   defp next_seq_num([], seq_num), do: seq_num

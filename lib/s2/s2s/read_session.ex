@@ -118,50 +118,17 @@ defmodule S2.S2S.ReadSession do
     {:ok, %{session | conn: conn, closed: true}}
   end
 
-  # Wait for the server to respond with 200 headers, establishing the session.
-  # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
-  # can always recover the connection.
   defp wait_for_headers(session) do
-    wait_for_headers(session, Shared.deadline(session.recv_timeout))
-  end
+    case Shared.wait_for_headers(session.conn, session.request_ref, session.recv_timeout) do
+      {:ok, 200, data, conn} ->
+        {:ok, %{session | conn: conn, data: data}}
 
-  defp wait_for_headers(session, dl) do
-    receive do
-      message ->
-        case Mint.HTTP2.stream(session.conn, message) do
-          {:ok, conn, responses} ->
-            session = %{session | conn: conn}
-            {status, data} = extract_status_and_data(responses, session.request_ref)
+      {:ok, status, _data, conn} ->
+        {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, conn}
 
-            cond do
-              status == 200 ->
-                {:ok, %{session | data: data}}
-
-              status != nil ->
-                {:error, %S2.Error{status: status, message: "unexpected status #{status}"},
-                 session.conn}
-
-              true ->
-                wait_for_headers(session, dl)
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, conn}
-
-          :unknown ->
-            wait_for_headers(session, dl)
-        end
-    after
-      Shared.remaining(dl) -> {:error, :timeout, session.conn}
+      {:error, reason, conn} ->
+        {:error, reason, conn}
     end
-  end
-
-  defp extract_status_and_data(responses, request_ref) do
-    Enum.reduce(responses, {nil, <<>>}, fn
-      {:status, ^request_ref, status}, {_s, d} -> {status, d}
-      {:data, ^request_ref, data}, {s, d} -> {s, d <> data}
-      _, acc -> acc
-    end)
   end
 
   defp receive_batch(session) do
@@ -182,7 +149,7 @@ defmodule S2.S2S.ReadSession do
                 {:error, :buffer_overflow, close_session(session)}
 
               :ok ->
-                done? = Shared.done?(responses)
+                done? = Shared.done?(responses, session.request_ref)
 
                 case Shared.decode_read_batch(all_data) do
                   {:ok, batch, rest} ->

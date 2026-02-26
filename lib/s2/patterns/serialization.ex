@@ -22,11 +22,11 @@ defmodule S2.Patterns.Serialization do
       {messages, reader} = Serialization.decode(reader, sequenced_records, serializer)
   """
 
-  alias S2.Patterns.{Framing, Dedupe}
+  alias S2.Patterns.{RecordFraming, Dedupe}
 
   @type serializer :: S2.Store.serializer()
   @type writer :: Dedupe.Writer.t()
-  @type reader :: %{filter: Dedupe.Filter.t(), assembler: Framing.Assembler.t()}
+  @type reader :: %{filter: Dedupe.Filter.t(), assembler: RecordFraming.Assembler.t()}
 
   @doc "Create a new writer state for stamping records with dedup headers."
   @spec writer() :: writer()
@@ -34,7 +34,7 @@ defmodule S2.Patterns.Serialization do
 
   @doc "Create a new reader state for dedup filtering and chunk reassembly."
   @spec reader() :: reader()
-  def reader, do: %{filter: Dedupe.Filter.new(), assembler: Framing.Assembler.new()}
+  def reader, do: %{filter: Dedupe.Filter.new(), assembler: RecordFraming.Assembler.new()}
 
   @doc """
   Serialize a term into an `%S2.V1.AppendInput{}` ready to send.
@@ -45,7 +45,7 @@ defmodule S2.Patterns.Serialization do
   @spec prepare(writer(), term(), serializer()) :: {S2.V1.AppendInput.t(), writer()}
   def prepare(writer, message, serializer) do
     bytes = serializer.serialize.(message)
-    records = Framing.frame(bytes)
+    records = RecordFraming.frame(bytes)
     {stamped, writer} = Dedupe.Writer.stamp_records(writer, records)
     {%S2.V1.AppendInput{records: stamped}, writer}
   end
@@ -77,7 +77,7 @@ defmodule S2.Patterns.Serialization do
           {:ok, filter} ->
             reader = %{reader | filter: filter}
 
-            case Framing.Assembler.add(reader.assembler, record) do
+            case RecordFraming.Assembler.add(reader.assembler, record) do
               {:ok, data, assembler} ->
                 reader = %{reader | assembler: assembler}
 
