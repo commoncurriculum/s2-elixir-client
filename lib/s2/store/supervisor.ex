@@ -67,7 +67,7 @@ defmodule S2.Store.Supervisor do
       with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
            {:ok, seq_num, conn} <- resolve_start_position(conn, config, stream, opts),
            {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout) do
-        S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
+        S2.Store.TailLoop.run(session, serializer, callback, listener_config)
       else
         {:error, reason, _conn} ->
           require Logger

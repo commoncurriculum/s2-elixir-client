@@ -40,15 +40,11 @@ defmodule S2.S2S.AppendSession do
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.AppendSession.open basin=#{basin} stream=#{stream}")
-    path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
+    path = Shared.records_path(stream)
     token = Keyword.get(opts, :token)
     recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
     compression = Keyword.get(opts, :compression, :none)
-
-    headers = [
-      {"content-type", "s2s/proto"},
-      {"s2-basin", basin}
-    ] ++ S2.S2S.Connection.auth_headers(token)
+    headers = Shared.build_headers(basin, token)
 
     case Mint.HTTP2.request(conn, "POST", path, headers, :stream) do
       {:ok, conn, request_ref} ->
@@ -247,11 +243,7 @@ defmodule S2.S2S.AppendSession do
   end
 
   defp check_owner!(%__MODULE__{owner_pid: pid}) do
-    if pid != self() do
-      raise ArgumentError,
-        "AppendSession must be used from the process that created it " <>
-          "(owner: #{inspect(pid)}, caller: #{inspect(self())})"
-    end
+    Shared.assert_owner!(pid, "AppendSession")
   end
 
   defp close_session(session, conn \\ nil) do

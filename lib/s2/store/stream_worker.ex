@@ -7,6 +7,8 @@ defmodule S2.Store.StreamWorker do
   alias S2.Patterns.Serialization
   alias S2.Store.Telemetry
 
+  @max_backoff 30_000
+
   def start_link({config, stream}) do
     name = S2.Store.Supervisor.stream_worker_name(config.store, stream)
     GenServer.start_link(__MODULE__, {config, stream}, name: name)
@@ -33,11 +35,8 @@ defmodule S2.Store.StreamWorker do
         writer: Serialization.writer()
       }}
     else
-      {:error, reason, _conn} ->
-        {:stop, {:connect_failed, reason}}
-
-      {:error, reason} ->
-        {:stop, {:connect_failed, reason}}
+      {:error, reason, _conn} -> {:stop, {:connect_failed, reason}}
+      {:error, reason} -> {:stop, {:connect_failed, reason}}
     end
   end
 
@@ -49,74 +48,55 @@ defmodule S2.Store.StreamWorker do
 
   @impl true
   def handle_call({:append, message, serializer}, _from, state) do
-    {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
+    with :ok <- check_backpressure(state) do
+      case safe_prepare(state.writer, message, serializer) do
+        {:error, reason} ->
+          {:reply, {:error, {:serialization_error, reason}}, state}
 
-    if queue_len > state.config.max_queue_size do
-      {:reply, {:error, :overloaded}, state}
-    else
-      do_append(message, serializer, state)
+        {:ok, input, writer} ->
+          run_append(state, input, writer, %{stream: state.stream})
+      end
     end
   end
 
   def handle_call({:append_batch, messages, serializer}, _from, state) do
+    with :ok <- check_backpressure(state) do
+      case safe_prepare_batch(state.writer, messages, serializer) do
+        {:error, reason} ->
+          {:reply, {:error, {:serialization_error, reason}}, state}
+
+        {:ok, input, writer} ->
+          run_append(state, input, writer, %{stream: state.stream, count: length(messages)})
+      end
+    end
+  end
+
+  # Shared append execution: serialize -> telemetry span -> append with reconnect
+  defp run_append(state, input, writer, metadata) do
+    result =
+      Telemetry.span([:s2, :store, :append], metadata, fn ->
+        case append_with_reconnect(state, input) do
+          {:ok, _ack, _session} = ok -> {ok, metadata}
+          {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
+        end
+      end)
+
+    case result do
+      {:ok, ack, session} ->
+        {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
+
+      {:error, reason, session} ->
+        {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+    end
+  end
+
+  defp check_backpressure(state) do
     {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
 
     if queue_len > state.config.max_queue_size do
       {:reply, {:error, :overloaded}, state}
     else
-      do_append_batch(messages, serializer, state)
-    end
-  end
-
-  defp do_append(message, serializer, state) do
-    metadata = %{stream: state.stream}
-
-    case safe_prepare(state.writer, message, serializer) do
-      {:error, reason} ->
-        {:reply, {:error, {:serialization_error, reason}}, state}
-
-      {:ok, input, writer} ->
-        result =
-          Telemetry.span([:s2, :store, :append], metadata, fn ->
-            case append_with_reconnect(state, input) do
-              {:ok, _ack, _session} = ok -> {ok, metadata}
-              {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
-            end
-          end)
-
-        case result do
-          {:ok, ack, session} ->
-            {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
-
-          {:error, reason, session} ->
-            {:reply, {:error, reason}, %{state | session: session, writer: writer}}
-        end
-    end
-  end
-
-  defp do_append_batch(messages, serializer, state) do
-    case safe_prepare_batch(state.writer, messages, serializer) do
-      {:error, reason} ->
-        {:reply, {:error, {:serialization_error, reason}}, state}
-
-      {:ok, input, writer} ->
-        metadata = %{stream: state.stream, count: length(messages)}
-
-        result =
-          Telemetry.span([:s2, :store, :append], metadata, fn ->
-            case append_with_reconnect(state, input) do
-              {:ok, _ack, _session} = ok -> {ok, metadata}
-              {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
-            end
-          end)
-
-        case result do
-          {:ok, ack, session} ->
-            {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
-
-          {:error, reason, session} ->
-            {:reply, {:error, reason}, %{state | session: session, writer: writer}}
-        end
+      :ok
     end
   end
 
@@ -141,11 +121,8 @@ defmodule S2.Store.StreamWorker do
 
   defp append_with_reconnect(state, input) do
     case S2.S2S.AppendSession.append(state.session, input) do
-      {:ok, _ack, _session} = ok ->
-        ok
-
-      {:error, _reason, _session} ->
-        reconnect_and_retry(state, input, 1)
+      {:ok, _ack, _session} = ok -> ok
+      {:error, _reason, _session} -> reconnect_and_retry(state, input, 1)
     end
   end
 
@@ -186,97 +163,14 @@ defmodule S2.Store.StreamWorker do
 
   defp reconnect(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream,
+           token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
       {:ok, session}
     else
       {:error, reason, _conn} -> {:error, reason}
       {:error, reason} -> {:error, reason}
     end
   end
-
-  @doc false
-  def tail_loop(session, serializer, callback, config \\ nil, reader \\ Serialization.reader()) do
-    do_tail_loop(session, serializer, callback, config, reader, 0)
-  end
-
-  defp do_tail_loop(session, serializer, callback, config, reader, seq_num) do
-    case S2.S2S.ReadSession.next_batch(session) do
-      {:ok, batch, session} ->
-        {results, reader} = Serialization.decode(reader, batch.records, serializer)
-
-        Enum.each(results, fn
-          {:error, reason} ->
-            Logger.warning("S2 decode error: #{inspect(reason)}")
-            :telemetry.execute([:s2, :store, :decode_error], %{count: 1}, %{reason: reason})
-
-          message ->
-            callback.(message)
-        end)
-
-        next_seq = next_seq_num(batch.records, seq_num)
-        do_tail_loop(session, serializer, callback, config, reader, next_seq)
-
-      {:error, :end_of_stream, _session} ->
-        :ok
-
-      {:error, _reason, _session} when config != nil ->
-        case reconnect_reader_with_backoff(config, seq_num, 1) do
-          {:ok, session} ->
-            do_tail_loop(session, serializer, callback, config, reader, seq_num)
-
-          {:error, _reason} ->
-            :ok
-        end
-
-      {:error, _reason, _session} ->
-        :ok
-    end
-  end
-
-  defp reconnect_reader_with_backoff(config, seq_num, attempt) do
-    max = config.max_retries
-
-    if max != :infinity and attempt > max do
-      {:error, :max_retries_exceeded}
-    else
-      metadata = %{stream: config.stream, component: :listener, attempt: attempt}
-
-      result =
-        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
-          case reconnect_reader(config, seq_num) do
-            {:ok, session} -> {{:ok, session}, metadata}
-            {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
-          end
-        end)
-
-      case result do
-        {:ok, session} ->
-          {:ok, session}
-
-        {:error, _reason} ->
-          backoff(config.base_delay, attempt)
-          reconnect_reader_with_backoff(config, seq_num, attempt + 1)
-      end
-    end
-  end
-
-  defp reconnect_reader(config, seq_num) do
-    recv_timeout = Map.get(config, :recv_timeout, 5_000)
-
-    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num, token: config.token, recv_timeout: recv_timeout) do
-      {:ok, session}
-    end
-  end
-
-  defp next_seq_num([], seq_num), do: seq_num
-
-  defp next_seq_num(records, _seq_num) do
-    last = List.last(records)
-    last.seq_num + 1
-  end
-
-  @max_backoff 30_000
 
   defp backoff(base_delay, attempt) do
     delay = min(base_delay * Integer.pow(2, attempt - 1), @max_backoff)

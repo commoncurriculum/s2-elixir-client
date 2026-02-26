@@ -33,14 +33,10 @@ defmodule S2.S2S.Append do
   end
 
   defp do_call(conn, basin, stream, body, opts) do
-    path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
+    path = Shared.records_path(stream)
     token = Keyword.get(opts, :token)
     recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
-
-    headers = [
-      {"content-type", "s2s/proto"},
-      {"s2-basin", basin}
-    ] ++ S2.S2S.Connection.auth_headers(token)
+    headers = Shared.build_headers(basin, token)
 
     case Mint.HTTP2.request(conn, "POST", path, headers, body) do
       {:ok, conn, request_ref} ->

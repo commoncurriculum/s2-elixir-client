@@ -30,13 +30,10 @@ defmodule S2.S2S.CheckTail do
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.CheckTail basin=#{basin} stream=#{stream}")
-    path = "/v1/streams/#{URI.encode_www_form(stream)}/records/tail"
+    path = Shared.records_path(stream) <> "/tail"
     token = Keyword.get(opts, :token)
-    recv_timeout = Keyword.get(opts, :recv_timeout, S2.S2S.Shared.default_timeout())
-
-    headers = [
-      {"s2-basin", basin}
-    ] ++ S2.S2S.Connection.auth_headers(token)
+    recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
+    headers = Shared.build_headers(basin, token, content_type: false)
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->

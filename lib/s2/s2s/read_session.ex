@@ -42,15 +42,10 @@ defmodule S2.S2S.ReadSession do
   def open(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
     query = Shared.build_read_query(opts)
-    path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
-
+    path = Shared.records_path(stream) <> query
     token = Keyword.get(opts, :token)
     recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
-
-    headers = [
-      {"content-type", "s2s/proto"},
-      {"s2-basin", basin}
-    ] ++ S2.S2S.Connection.auth_headers(token)
+    headers = Shared.build_headers(basin, token)
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
@@ -211,11 +206,7 @@ defmodule S2.S2S.ReadSession do
   end
 
   defp check_owner!(%__MODULE__{owner_pid: pid}) do
-    if pid != self() do
-      raise ArgumentError,
-        "ReadSession must be used from the process that created it " <>
-          "(owner: #{inspect(pid)}, caller: #{inspect(self())})"
-    end
+    Shared.assert_owner!(pid, "ReadSession")
   end
 
   defp close_session(session, conn \\ nil) do

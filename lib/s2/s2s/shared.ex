@@ -208,6 +208,47 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
+  Build the S2S records path for a stream.
+  """
+  @spec records_path(String.t()) :: String.t()
+  def records_path(stream) do
+    "/v1/streams/#{URI.encode_www_form(stream)}/records"
+  end
+
+  @doc """
+  Build standard S2S headers with basin and optional auth token.
+
+  ## Options
+
+    * `:content_type` — include content-type header (default: `true`).
+  """
+  @spec build_headers(String.t(), String.t() | nil, keyword()) :: [{String.t(), String.t()}]
+  def build_headers(basin, token, opts \\ []) do
+    headers =
+      if Keyword.get(opts, :content_type, true) do
+        [{"content-type", "s2s/proto"}, {"s2-basin", basin}]
+      else
+        [{"s2-basin", basin}]
+      end
+
+    headers ++ S2.S2S.Connection.auth_headers(token)
+  end
+
+  @doc """
+  Assert that the calling process owns the session. Raises ArgumentError if not.
+  """
+  @spec assert_owner!(pid(), String.t()) :: :ok
+  def assert_owner!(owner_pid, module_name) do
+    if owner_pid != self() do
+      raise ArgumentError,
+        "#{module_name} must be used from the process that created it " <>
+          "(owner: #{inspect(owner_pid)}, caller: #{inspect(self())})"
+    end
+
+    :ok
+  end
+
+  @doc """
   Build a query string from keyword opts, filtering to known read parameters.
   Values are URL-encoded to prevent parameter injection.
   """

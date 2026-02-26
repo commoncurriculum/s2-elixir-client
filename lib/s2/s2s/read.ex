@@ -11,7 +11,6 @@ defmodule S2.S2S.Read do
 
   alias S2.S2S.Shared
 
-  # Uses Shared.default_timeout() at runtime via Keyword.get default
 
   @doc """
   Read a single batch of records from a stream.
@@ -33,14 +32,9 @@ defmodule S2.S2S.Read do
   def call(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.Read basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
     query = Shared.build_read_query(opts)
-    path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
+    path = Shared.records_path(stream) <> query
     token = Keyword.get(opts, :token)
-
-    headers = [
-      {"content-type", "s2s/proto"},
-      {"s2-basin", basin}
-    ] ++ S2.S2S.Connection.auth_headers(token)
-
+    headers = Shared.build_headers(basin, token)
     recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
