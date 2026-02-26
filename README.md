@@ -284,6 +284,23 @@ MyApp.S2 (Supervisor)
 
 `S2.Store` is the recommended way to use the SDK. The control and data plane modules below it are available if you need lower-level access.
 
+## Guarantees
+
+### From S2 (the server)
+
+- **Durability.** Appended records are persisted and survive restarts.
+- **Ordering.** Records within a stream are totally ordered by sequence number.
+- **At-least-once delivery.** Readers see every record at least once.
+
+### From this SDK
+
+- **Automatic reconnection.** If a TCP connection drops, appends reconnect and retry transparently. Listeners reconnect from the last read sequence number — no messages are lost.
+- **No duplicates.** Each writer stamps records with a unique ID and monotonic sequence. If a message was written but the ack was lost, the retry produces a duplicate on the wire, but readers filter it out automatically.
+- **Large message support.** Messages over 1 MiB are chunked on write and reassembled on read. You don't need to think about record size limits.
+- **Stream isolation.** Each stream gets its own process and connection. A slow or failed stream doesn't block others.
+- **Supervised workers.** Stream workers are managed by a DynamicSupervisor. If a worker crashes, the supervisor restarts it and the next append picks up where it left off.
+- **Validate on write, not on read.** Serializers cast fields on read without validation, so schema changes don't break deserialization of old messages.
+
 ## License
 
 MIT

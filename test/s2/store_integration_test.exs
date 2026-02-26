@@ -193,6 +193,72 @@ defmodule S2.StoreIntegrationTest do
     assert_receive {:msg, %Chat.Message{text: "second"}}, 10_000
   end
 
+  test "no duplicate messages after reconnect" do
+    {:ok, _} = Chat.create_room("dedup")
+
+    # Append two messages normally
+    {:ok, _} = Chat.append("chat/dedup", Chat.Message.new(user: "alice", text: "one"))
+    {:ok, _} = Chat.append("chat/dedup", Chat.Message.new(user: "alice", text: "two"))
+
+    # Kill the connection and append a third
+    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/dedup")
+    %{session: session} = :sys.get_state(worker_pid)
+    :gen_tcp.close(session.conn.socket)
+
+    {:ok, _} = Chat.append("chat/dedup", Chat.Message.new(user: "alice", text: "three"))
+
+    # Read all messages — should be exactly 3, no duplicates
+    test_pid = self()
+
+    Chat.listen("chat/dedup", fn %Chat.Message{} = msg ->
+      send(test_pid, {:msg, msg})
+    end)
+
+    messages = for _ <- 1..3 do
+      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+      msg
+    end
+
+    assert Enum.map(messages, & &1.text) == ["one", "two", "three"]
+    refute_receive {:msg, _}, 500
+  end
+
+  test "crashed worker is restarted by supervisor" do
+    {:ok, _} = Chat.create_room("crash")
+
+    # First append starts the worker
+    {:ok, _} = Chat.append("chat/crash", Chat.Message.new(user: "alice", text: "before crash"))
+
+    [{old_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/crash")
+
+    # Kill the worker process
+    ref = Process.monitor(old_pid)
+    Process.exit(old_pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^old_pid, :killed}
+
+    # Supervisor restarts the worker — new PID, same stream name
+    Process.sleep(50)
+    [{new_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/crash")
+    assert new_pid != old_pid
+
+    # The restarted worker works — next append succeeds
+    {:ok, _} = Chat.append("chat/crash", Chat.Message.new(user: "bob", text: "after crash"))
+
+    test_pid = self()
+
+    Chat.listen("chat/crash", fn %Chat.Message{} = msg ->
+      send(test_pid, {:msg, msg})
+    end)
+
+    messages = for _ <- 1..2 do
+      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+      msg
+    end
+
+    assert Enum.at(messages, 0).text == "before crash"
+    assert Enum.at(messages, 1).text == "after crash"
+  end
+
   test "Message.new validates required fields" do
     assert_raise Ecto.InvalidChangesetError, fn ->
       Chat.Message.new(text: "no user")
