@@ -132,6 +132,67 @@ defmodule S2.StoreIntegrationTest do
     refute_receive {:general, %Chat.Message{text: "in random"}}, 500
   end
 
+  test "append reconnects after connection drop" do
+    {:ok, _} = Chat.create_room("reconnect")
+
+    # First append succeeds — this lazily starts the stream worker
+    msg1 = Chat.Message.new(user: "alice", text: "before disconnect")
+    {:ok, ack1} = Chat.append("chat/reconnect", msg1)
+    assert ack1.start.seq_num == 0
+
+    # Kill the worker's underlying TCP socket to simulate a connection drop
+    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/reconnect")
+    %{session: session} = :sys.get_state(worker_pid)
+    socket = session.conn.socket
+    :gen_tcp.close(socket)
+
+    # Next append should reconnect transparently and succeed
+    msg2 = Chat.Message.new(user: "bob", text: "after disconnect")
+    {:ok, ack2} = Chat.append("chat/reconnect", msg2)
+    assert ack2.start.seq_num >= 1
+
+    # Both messages should be readable
+    test_pid = self()
+
+    Chat.listen("chat/reconnect", fn %Chat.Message{} = msg ->
+      send(test_pid, {:msg, msg})
+    end)
+
+    messages = for _ <- 1..2 do
+      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+      msg
+    end
+
+    assert Enum.at(messages, 0).text == "before disconnect"
+    assert Enum.at(messages, 1).text == "after disconnect"
+  end
+
+  test "listener reconnects after connection drop" do
+    {:ok, _} = Chat.create_room("listen-reconnect")
+
+    test_pid = self()
+
+    {:ok, listener_pid} = Chat.listen("chat/listen-reconnect", fn %Chat.Message{} = msg ->
+      send(test_pid, {:msg, msg})
+    end)
+
+    # Append a message — listener should receive it
+    {:ok, _} = Chat.append("chat/listen-reconnect", Chat.Message.new(user: "alice", text: "first"))
+    assert_receive {:msg, %Chat.Message{text: "first"}}, 5_000
+
+    # Find and kill the listener's TCP socket to simulate a connection drop
+    {:links, links} = Process.info(listener_pid, :links)
+    tcp_port = Enum.find(links, fn
+      port when is_port(port) -> Port.info(port, :name) == {:name, ~c"tcp_inet"}
+      _ -> false
+    end)
+    :gen_tcp.close(tcp_port)
+
+    # Append another message — the listener should reconnect and receive it
+    {:ok, _} = Chat.append("chat/listen-reconnect", Chat.Message.new(user: "bob", text: "second"))
+    assert_receive {:msg, %Chat.Message{text: "second"}}, 10_000
+  end
+
   test "Message.new validates required fields" do
     assert_raise Ecto.InvalidChangesetError, fn ->
       Chat.Message.new(text: "no user")

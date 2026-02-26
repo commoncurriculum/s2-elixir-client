@@ -272,6 +272,7 @@ MyApp.S2 (Supervisor)
 - **Workers start lazily.** The first `append("chat/general", ...)` starts a worker for that stream. Subsequent appends reuse the open session — no handshake overhead.
 - **Listeners are independent.** Each `listen` call spawns a Task with its own connection and `ReadSession`, tailing the stream and calling your callback as messages arrive. This is required because Mint delivers TCP data to the owning process's mailbox.
 - **Control plane is shared.** `create_stream` and `delete_stream` go through a single `ControlPlane` GenServer using the JSON/Req client. These are infrequent operations that don't need per-stream isolation.
+- **Automatic reconnection.** If a TCP connection drops, both appends and listeners reconnect transparently. Append workers detect the failure on the next send, open a new connection and session, and retry — the caller just gets back `{:ok, ack}`. Listeners detect the drop when the read times out, then reconnect from the last successfully read sequence number so no messages are lost. The dedupe writer preserves its ID and sequence across reconnects, so if a message was written but the ack was lost, readers filter the duplicate automatically.
 
 ### Protocol layers
 

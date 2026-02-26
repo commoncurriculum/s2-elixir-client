@@ -174,10 +174,12 @@ defmodule S2.Store.Supervisor do
     seq_num = Keyword.get(opts, :from, 0)
     serializer = Keyword.get(opts, :serializer, config.serializer)
 
+    listener_config = %{base_url: config.base_url, token: config.token, basin: config.basin, stream: stream}
+
     Task.Supervisor.start_child(task_sup_name(store), fn ->
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
       {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num)
-      S2.Store.StreamWorker.tail_loop(session, serializer, callback)
+      S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
     end)
   end
 
@@ -256,7 +258,7 @@ defmodule S2.Store.StreamWorker do
   def handle_call({:append, message, serializer}, _from, state) do
     {input, writer} = Serialization.prepare(state.writer, message, serializer)
 
-    case S2.S2S.AppendSession.append(state.session, input) do
+    case append_with_reconnect(state, input) do
       {:ok, ack, session} ->
         {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
 
@@ -265,18 +267,69 @@ defmodule S2.Store.StreamWorker do
     end
   end
 
-  def tail_loop(session, serializer, callback, reader \\ Serialization.reader()) do
+  defp append_with_reconnect(state, input) do
+    case S2.S2S.AppendSession.append(state.session, input) do
+      {:ok, _ack, _session} = ok ->
+        ok
+
+      {:error, _reason, _session} ->
+        case reconnect(state.config, state.stream) do
+          {:ok, session} ->
+            S2.S2S.AppendSession.append(session, input)
+
+          {:error, reason} ->
+            {:error, reason, state.session}
+        end
+    end
+  end
+
+  defp reconnect(config, stream) do
+    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream) do
+      {:ok, session}
+    end
+  end
+
+  def tail_loop(session, serializer, callback, config \\ nil, reader \\ Serialization.reader()) do
+    do_tail_loop(session, serializer, callback, config, reader, 0)
+  end
+
+  defp do_tail_loop(session, serializer, callback, config, reader, seq_num) do
     case S2.S2S.ReadSession.next_batch(session) do
       {:ok, batch, session} ->
         {messages, reader} = Serialization.decode(reader, batch.records, serializer)
         Enum.each(messages, callback)
-        tail_loop(session, serializer, callback, reader)
+        next_seq = next_seq_num(batch.records, seq_num)
+        do_tail_loop(session, serializer, callback, config, reader, next_seq)
 
       {:error, :end_of_stream, _session} ->
         :ok
 
+      {:error, _reason, _session} when config != nil ->
+        case reconnect_reader(config, seq_num) do
+          {:ok, session} ->
+            do_tail_loop(session, serializer, callback, config, reader, seq_num)
+
+          {:error, _reason} ->
+            :ok
+        end
+
       {:error, _reason, _session} ->
         :ok
+    end
+  end
+
+  defp next_seq_num([], seq_num), do: seq_num
+
+  defp next_seq_num(records, _seq_num) do
+    last = List.last(records)
+    last.seq_num + 1
+  end
+
+  defp reconnect_reader(config, seq_num) do
+    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
+         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num) do
+      {:ok, session}
     end
   end
 end
