@@ -40,7 +40,7 @@ defmodule S2.S2S.ReadSession do
   @spec open(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
-    Logger.debug("S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(opts)}")
+    Logger.debug("S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(Keyword.delete(opts, :token))}")
     query = Shared.build_read_query(opts)
     path = Shared.records_path(stream) <> query
     token = Keyword.get(opts, :token)

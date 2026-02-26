@@ -45,11 +45,11 @@ defmodule S2.Patterns.Dedupe do
     # in long-lived listeners that see many transient writers.
     @max_writers 10_000
 
-    @type t :: %__MODULE__{seen: %{binary() => non_neg_integer()}, order: [binary()]}
-    defstruct seen: %{}, order: []
+    @type t :: %__MODULE__{seen: %{binary() => non_neg_integer()}, order: :queue.queue(binary())}
+    defstruct seen: %{}, order: {[], []}
 
     @spec new() :: t()
-    def new, do: %__MODULE__{}
+    def new, do: %__MODULE__{order: :queue.new()}
 
     @spec check(t(), S2.V1.SequencedRecord.t()) :: {:ok, t()} | :duplicate
     def check(%__MODULE__{} = filter, record) do
@@ -61,7 +61,7 @@ defmodule S2.Patterns.Dedupe do
           case Map.get(filter.seen, writer_id) do
             nil ->
               filter = maybe_evict(filter)
-              {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq), order: filter.order ++ [writer_id]}}
+              {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq), order: :queue.in(writer_id, filter.order)}}
 
             last_seq when seq > last_seq ->
               {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq)}}
@@ -73,7 +73,7 @@ defmodule S2.Patterns.Dedupe do
     end
 
     defp maybe_evict(%{seen: seen, order: order} = filter) when map_size(seen) >= @max_writers do
-      [oldest | rest] = order
+      {{:value, oldest}, rest} = :queue.out(order)
       %{filter | seen: Map.delete(seen, oldest), order: rest}
     end
 

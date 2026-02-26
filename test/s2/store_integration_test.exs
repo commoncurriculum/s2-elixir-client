@@ -151,9 +151,12 @@ defmodule S2.StoreIntegrationTest do
     socket = session.conn.socket
     :gen_tcp.close(socket)
 
-    # Next append should reconnect transparently and succeed
+    # First append after disconnect fails immediately — worker triggers async reconnect
     msg2 = Chat.Message.new(user: "bob", text: "after disconnect")
-    {:ok, ack2} = Chat.append("chat/reconnect", msg2)
+    {:error, _reason} = Chat.append("chat/reconnect", msg2)
+
+    # Retry until the worker has reconnected (async reconnect with backoff)
+    {:ok, ack2} = retry_until_ok(fn -> Chat.append("chat/reconnect", msg2) end)
     assert ack2.start.seq_num >= 1
 
     # Both messages should be readable
@@ -210,7 +213,12 @@ defmodule S2.StoreIntegrationTest do
     %{session: session} = :sys.get_state(worker_pid)
     :gen_tcp.close(session.conn.socket)
 
-    {:ok, _} = Chat.append("chat/dedup", Chat.Message.new(user: "alice", text: "three"))
+    # First append after disconnect triggers async reconnect
+    msg3 = Chat.Message.new(user: "alice", text: "three")
+    {:error, _} = Chat.append("chat/dedup", msg3)
+
+    # Retry until worker has reconnected
+    {:ok, _} = retry_until_ok(fn -> Chat.append("chat/dedup", msg3) end)
 
     # Read all messages — should be exactly 3, no duplicates
     test_pid = self()
@@ -287,6 +295,24 @@ defmodule S2.StoreIntegrationTest do
 
     # Confirm no old messages leaked through
     refute_receive {:tail_msg, _}, 500
+  end
+
+  test "listen from: :tail on nonexistent stream logs error and exits" do
+    import ExUnit.CaptureLog
+
+    test_pid = self()
+
+    log = capture_log(fn ->
+      {:ok, listener_pid} = Chat.listen("chat/nonexistent-tail-stream", fn _msg ->
+        send(test_pid, :should_not_happen)
+      end, from: :tail)
+
+      ref = Process.monitor(listener_pid)
+      assert_receive {:DOWN, ^ref, :process, ^listener_pid, _reason}, 5_000
+    end)
+
+    assert log =~ "listener failed to start"
+    refute_received :should_not_happen
   end
 
   test "stop_listener stops a running listener" do
@@ -444,8 +470,12 @@ defmodule S2.StoreIntegrationTest do
     %{session: session} = :sys.get_state(worker_pid)
     :gen_tcp.close(session.conn.socket)
 
-    # Next append triggers reconnect
-    {:ok, _} = Chat.append("chat/telemetry-reconnect", Chat.Message.new(user: "bob", text: "after"))
+    # Next append fails and triggers async reconnect
+    msg = Chat.Message.new(user: "bob", text: "after")
+    {:error, _} = Chat.append("chat/telemetry-reconnect", msg)
+
+    # Wait for async reconnect to complete
+    {:ok, _} = retry_until_ok(fn -> Chat.append("chat/telemetry-reconnect", msg) end)
 
     assert_receive {:telemetry, [:s2, :store, :reconnect, :start], %{system_time: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000
     assert_receive {:telemetry, [:s2, :store, :reconnect, :stop], %{duration: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000

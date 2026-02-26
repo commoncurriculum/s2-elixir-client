@@ -4,15 +4,20 @@ defmodule S2.Store.TailLoop do
   require Logger
 
   alias S2.Patterns.Serialization
-
-  @max_backoff 30_000
+  alias S2.Store.Connector
 
   @doc false
   def run(session, serializer, callback, config \\ nil, reader \\ Serialization.reader()) do
-    do_loop(session, serializer, callback, config, reader, 0)
+    connector =
+      if config do
+        Connector.new(base_delay: config.base_delay, max_retries: config.max_retries)
+        |> Connector.connected()
+      end
+
+    do_loop(session, serializer, callback, config, reader, connector, 0)
   end
 
-  defp do_loop(session, serializer, callback, config, reader, seq_num) do
+  defp do_loop(session, serializer, callback, config, reader, connector, seq_num) do
     case S2.S2S.ReadSession.next_batch(session) do
       {:ok, batch, session} ->
         {results, reader} = Serialization.decode(reader, batch.records, serializer)
@@ -27,18 +32,21 @@ defmodule S2.Store.TailLoop do
         end)
 
         next_seq = next_seq_num(batch.records, seq_num)
-        do_loop(session, serializer, callback, config, reader, next_seq)
+        # Reset connector on successful batch (connection is healthy)
+        connector = if connector, do: Connector.connected(connector), else: nil
+        do_loop(session, serializer, callback, config, reader, connector, next_seq)
 
       {:error, :end_of_stream, _session} ->
         :ok
 
-      {:error, _reason, _session} when config != nil ->
-        case reconnect_with_backoff(config, seq_num, 1) do
-          {:ok, session} ->
-            do_loop(session, serializer, callback, config, reader, seq_num)
+      {:error, _reason, _session} when connector != nil ->
+        case reconnect_with_backoff(config, connector, seq_num) do
+          {:ok, session, connector} ->
+            do_loop(session, serializer, callback, config, reader, connector, seq_num)
 
-          {:error, _reason} ->
-            :ok
+          {:error, reason} ->
+            Logger.error("S2 listener giving up after max retries stream=#{config.stream} reason=#{inspect(reason)}")
+            {:error, reason}
         end
 
       {:error, _reason, _session} ->
@@ -46,30 +54,30 @@ defmodule S2.Store.TailLoop do
     end
   end
 
-  defp reconnect_with_backoff(config, seq_num, attempt) do
-    max = config.max_retries
+  defp reconnect_with_backoff(config, connector, seq_num) do
+    case Connector.begin_reconnect(connector) do
+      {:error, :max_retries_exceeded} ->
+        {:error, :max_retries_exceeded}
 
-    if max != :infinity and attempt > max do
-      {:error, :max_retries_exceeded}
-    else
-      metadata = %{stream: config.stream, component: :listener, attempt: attempt}
+      {:retry, delay, connector} ->
+        Process.sleep(delay)
+        metadata = %{stream: config.stream, component: :listener, attempt: connector.attempt}
 
-      result =
-        :telemetry.span([:s2, :store, :reconnect], metadata, fn ->
-          case reconnect(config, seq_num) do
-            {:ok, session} -> {{:ok, session}, metadata}
-            {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
-          end
-        end)
+        result =
+          :telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+            case reconnect(config, seq_num) do
+              {:ok, session} -> {{:ok, session}, metadata}
+              {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
+            end
+          end)
 
-      case result do
-        {:ok, session} ->
-          {:ok, session}
+        case result do
+          {:ok, session} ->
+            {:ok, session, Connector.connected(connector)}
 
-        {:error, _reason} ->
-          backoff(config.base_delay, attempt)
-          reconnect_with_backoff(config, seq_num, attempt + 1)
-      end
+          {:error, _reason} ->
+            reconnect_with_backoff(config, connector, seq_num)
+        end
     end
   end
 
@@ -89,11 +97,5 @@ defmodule S2.Store.TailLoop do
   defp next_seq_num(records, _seq_num) do
     last = List.last(records)
     last.seq_num + 1
-  end
-
-  defp backoff(base_delay, attempt) do
-    delay = min(base_delay * Integer.pow(2, attempt - 1), @max_backoff)
-    jitter = :rand.uniform(max(div(delay, 2), 1))
-    Process.sleep(delay + jitter)
   end
 end

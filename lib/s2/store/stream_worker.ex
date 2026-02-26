@@ -5,9 +5,7 @@ defmodule S2.Store.StreamWorker do
   require Logger
 
   alias S2.Patterns.Serialization
-  alias S2.Store.Telemetry
-
-  @max_backoff 30_000
+  alias S2.Store.{Connector, Telemetry}
 
   def start_link({config, stream}) do
     name = S2.Store.Supervisor.stream_worker_name(config.store, stream)
@@ -24,29 +22,41 @@ defmodule S2.Store.StreamWorker do
     GenServer.call(name, {:append_batch, messages, serializer})
   end
 
+  # --- Callbacks ---
+
   @impl true
   def init({config, stream}) do
-    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
-      {:ok, %{
-        config: config,
-        stream: stream,
-        session: session,
-        writer: Serialization.writer()
-      }}
-    else
-      {:error, reason, _conn} -> {:stop, {:connect_failed, reason}}
-      {:error, reason} -> {:stop, {:connect_failed, reason}}
+    connector = Connector.new(base_delay: config.base_delay, max_retries: config.max_retries)
+
+    case open_session(config, stream) do
+      {:ok, session} ->
+        {:ok, %{
+          config: config,
+          stream: stream,
+          session: session,
+          writer: Serialization.writer(),
+          connector: Connector.connected(connector)
+        }}
+
+      {:error, reason} ->
+        {:stop, {:connect_failed, reason}}
     end
   end
 
   @impl true
+  def terminate(_reason, %{session: nil}), do: :ok
+
   def terminate(_reason, state) do
     S2.S2S.AppendSession.close(state.session)
     :ok
   end
 
   @impl true
+  def handle_call(_msg, _from, %{connector: %{status: status}} = state)
+      when status in [:reconnecting, :failed] do
+    {:reply, {:error, :reconnecting}, state}
+  end
+
   def handle_call({:append, message, serializer}, _from, state) do
     with :ok <- check_backpressure(state) do
       case safe_prepare(state.writer, message, serializer) do
@@ -59,6 +69,7 @@ defmodule S2.Store.StreamWorker do
     end
   end
 
+  @impl true
   def handle_call({:append_batch, messages, serializer}, _from, state) do
     with :ok <- check_backpressure(state) do
       case safe_prepare_batch(state.writer, messages, serializer) do
@@ -71,11 +82,28 @@ defmodule S2.Store.StreamWorker do
     end
   end
 
-  # Shared append execution: serialize -> telemetry span -> append with reconnect
+  @impl true
+  def handle_info({:reconnected, session}, state) do
+    Logger.debug("S2 StreamWorker reconnected stream=#{state.stream}")
+    {:noreply, %{state | session: session, connector: Connector.connected(state.connector)}}
+  end
+
+  def handle_info({:reconnect_failed, _reason}, state) do
+    schedule_reconnect(state)
+  end
+
+  def handle_info(:reconnect, state) do
+    spawn_reconnect_task(state)
+    {:noreply, state}
+  end
+
+  # --- Private ---
+
+  # Shared append execution: serialize -> telemetry span -> append or trigger reconnect
   defp run_append(state, input, writer, metadata) do
     result =
       Telemetry.span([:s2, :store, :append], metadata, fn ->
-        case append_with_reconnect(state, input) do
+        case S2.S2S.AppendSession.append(state.session, input) do
           {:ok, _ack, _session} = ok -> {ok, metadata}
           {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
         end
@@ -85,9 +113,71 @@ defmodule S2.Store.StreamWorker do
       {:ok, ack, session} ->
         {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
 
-      {:error, reason, session} ->
-        {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+      {:error, reason, _session} ->
+        # Append failed — trigger async reconnect and return error immediately
+        state = %{state | writer: writer}
+        {_, new_state} = begin_reconnect(state)
+        {:reply, {:error, reason}, new_state}
     end
+  end
+
+  defp begin_reconnect(state) do
+    # Best-effort close of old session
+    if state.session, do: S2.S2S.AppendSession.close(state.session)
+
+    case Connector.begin_reconnect(state.connector) do
+      {:retry, delay, connector} ->
+        Process.send_after(self(), :reconnect, delay)
+        {:reconnecting, %{state | session: nil, connector: connector}}
+
+      {:error, :max_retries_exceeded} ->
+        Logger.error("S2 StreamWorker max retries exceeded stream=#{state.stream}")
+        connector = %{state.connector | status: :failed}
+        {:failed, %{state | session: nil, connector: connector}}
+    end
+  end
+
+  defp schedule_reconnect(state) do
+    case begin_reconnect(state) do
+      {:reconnecting, state} -> {:noreply, state}
+      {:failed, state} -> {:noreply, state}
+    end
+  end
+
+  # Spawn a Task that opens a new connection + session in its own process,
+  # then transfers the Mint connection to this GenServer. This avoids
+  # Mint's receive-based protocol stealing GenServer messages from our mailbox.
+  defp spawn_reconnect_task(state) do
+    parent = self()
+    config = state.config
+    stream = state.stream
+
+    metadata = %{stream: stream, component: :writer, attempt: state.connector.attempt}
+
+    Task.start(fn ->
+      result =
+        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+          case open_session(config, stream) do
+            {:ok, session} ->
+              case Mint.HTTP2.controlling_process(session.conn, parent) do
+                {:ok, new_conn} ->
+                  session = %{session | conn: new_conn, owner_pid: parent}
+                  {{:ok, session}, metadata}
+
+                {:error, reason} ->
+                  {{:error, reason}, Map.put(metadata, :error, :transfer_failed)}
+              end
+
+            {:error, reason} ->
+              {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
+          end
+        end)
+
+      case result do
+        {:ok, session} -> send(parent, {:reconnected, session})
+        {:error, reason} -> send(parent, {:reconnect_failed, reason})
+      end
+    end)
   end
 
   defp check_backpressure(state) do
@@ -119,49 +209,7 @@ defmodule S2.Store.StreamWorker do
     e -> {:error, e}
   end
 
-  defp append_with_reconnect(state, input) do
-    case S2.S2S.AppendSession.append(state.session, input) do
-      {:ok, _ack, _session} = ok -> ok
-      {:error, _reason, _session} -> reconnect_and_retry(state, input, 1)
-    end
-  end
-
-  defp reconnect_and_retry(state, input, attempt) do
-    max = state.config.max_retries
-
-    if max != :infinity and attempt > max do
-      {:error, :max_retries_exceeded, state.session}
-    else
-      metadata = %{stream: state.stream, component: :writer, attempt: attempt}
-
-      # Best-effort close of old session before reconnecting
-      S2.S2S.AppendSession.close(state.session)
-
-      result =
-        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
-          case reconnect(state.config, state.stream) do
-            {:ok, session} -> {{:ok, session}, metadata}
-            {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
-          end
-        end)
-
-      case result do
-        {:ok, session} ->
-          case S2.S2S.AppendSession.append(session, input) do
-            {:ok, _ack, _session} = ok -> ok
-            {:error, _reason, _session} ->
-              backoff(state.config.base_delay, attempt)
-              reconnect_and_retry(%{state | session: session}, input, attempt + 1)
-          end
-
-        {:error, _reason} ->
-          backoff(state.config.base_delay, attempt)
-          reconnect_and_retry(state, input, attempt + 1)
-      end
-    end
-  end
-
-  defp reconnect(config, stream) do
+  defp open_session(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
          {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream,
            token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
@@ -170,11 +218,5 @@ defmodule S2.Store.StreamWorker do
       {:error, reason, _conn} -> {:error, reason}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp backoff(base_delay, attempt) do
-    delay = min(base_delay * Integer.pow(2, attempt - 1), @max_backoff)
-    jitter = :rand.uniform(max(div(delay, 2), 1))
-    Process.sleep(delay + jitter)
   end
 end

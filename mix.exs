@@ -43,6 +43,7 @@ defmodule S2.MixProject do
   defp package do
     [
       licenses: ["MIT"],
+      files: ["lib", "mix.exs", "README.md", "LICENSE"],
       links: %{
         "GitHub" => @source_url,
         "S2" => "https://s2.dev"
