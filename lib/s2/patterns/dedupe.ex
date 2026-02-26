@@ -46,7 +46,7 @@ defmodule S2.Patterns.Dedupe do
     @max_writers 10_000
 
     @type t :: %__MODULE__{seen: %{binary() => non_neg_integer()}, order: :queue.queue(binary())}
-    defstruct seen: %{}, order: {[], []}
+    defstruct seen: %{}, order: :queue.new()
 
     @spec new() :: t()
     def new, do: %__MODULE__{order: :queue.new()}

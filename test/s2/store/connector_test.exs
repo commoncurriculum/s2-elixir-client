@@ -37,26 +37,25 @@ defmodule S2.Store.ConnectorTest do
       assert is_integer(delay) and delay > 0
     end
 
-    test "increases delay with each attempt (exponential backoff)" do
+    test "delay uses full jitter up to exponential cap" do
       conn = Connector.new(base_delay: 100) |> Connector.connected()
 
+      # attempt 1: rand(1..100), attempt 2: rand(1..200), attempt 3: rand(1..400)
       {:retry, delay1, conn} = Connector.begin_reconnect(conn)
       {:retry, delay2, conn} = Connector.begin_reconnect(conn)
       {:retry, delay3, _conn} = Connector.begin_reconnect(conn)
 
-      # Delays grow exponentially. With jitter they won't be exact,
-      # but each attempt's max should roughly double.
-      # base=100: attempt 1 -> 100..150, attempt 2 -> 200..300, attempt 3 -> 400..600
-      assert delay1 < delay2
-      assert delay2 < delay3
+      assert delay1 >= 1 and delay1 <= 100
+      assert delay2 >= 1 and delay2 <= 200
+      assert delay3 >= 1 and delay3 <= 400
     end
 
     test "caps delay at max_backoff" do
       conn = Connector.new(base_delay: 20_000) |> Connector.connected()
 
       {:retry, delay, _conn} = Connector.begin_reconnect(conn)
-      # max_backoff is 30_000, so 20_000 * 2^0 = 20_000 + jitter, should be <= 30_000 + jitter
-      assert delay <= 45_000
+      # max_backoff is 30_000, full jitter: rand(1..30_000)
+      assert delay >= 1 and delay <= 30_000
     end
 
     test "returns {:error, :max_retries_exceeded} when retries exhausted" do

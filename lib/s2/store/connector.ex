@@ -45,8 +45,7 @@ defmodule S2.Store.Connector do
 
   @spec backoff_delay(pos_integer(), pos_integer(), pos_integer()) :: pos_integer()
   defp backoff_delay(base_delay, attempt, max_backoff) do
-    delay = min(base_delay * Integer.pow(2, attempt - 1), max_backoff)
-    jitter = :rand.uniform(max(div(delay, 2), 1))
-    delay + jitter
+    max_delay = min(base_delay * Integer.pow(2, attempt - 1), max_backoff)
+    :rand.uniform(max(max_delay, 1))
   end
 end

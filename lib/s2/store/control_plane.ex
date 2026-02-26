@@ -22,6 +22,7 @@ defmodule S2.Store.ControlPlane do
     {:reply, result, state}
   end
 
+  @impl true
   def handle_call({:delete_stream, stream}, _from, state) do
     result = S2.Streams.delete_stream(stream, server: state.client, basin: state.basin)
     {:reply, result, state}

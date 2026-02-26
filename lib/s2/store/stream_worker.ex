@@ -46,10 +46,12 @@ defmodule S2.Store.StreamWorker do
   @impl true
   def terminate(_reason, %{session: nil}), do: :ok
 
-  def terminate(_reason, state) do
+  def terminate(_reason, %{session: %S2.S2S.AppendSession{}} = state) do
     S2.S2S.AppendSession.close(state.session)
     :ok
   end
+
+  def terminate(_reason, _state), do: :ok
 
   @impl true
   def handle_call(_msg, _from, %{connector: %{status: status}} = state)

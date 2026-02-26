@@ -254,10 +254,7 @@ defmodule S2.S2S.Shared do
   """
   @spec build_read_query(keyword()) :: String.t()
   def build_read_query(opts) do
-    params =
-      opts
-      |> Keyword.take([:seq_num, :count, :wait, :until, :clamp, :tail_offset])
-      |> Enum.map(fn {k, v} -> {Atom.to_string(k), to_string(v)} end)
+    params = Keyword.take(opts, [:seq_num, :count, :wait, :until, :clamp, :tail_offset])
 
     case params do
       [] -> ""
