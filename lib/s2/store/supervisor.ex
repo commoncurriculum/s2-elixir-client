@@ -2,6 +2,8 @@ defmodule S2.Store.Supervisor do
   @moduledoc false
   use Supervisor
 
+  require Logger
+
   def start_link(config) do
     Supervisor.start_link(__MODULE__, config, name: config.store)
   end
@@ -70,13 +72,13 @@ defmodule S2.Store.Supervisor do
         S2.Store.TailLoop.run(session, serializer, callback, listener_config)
       else
         {:error, reason, _conn} ->
-          require Logger
           Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
+          S2.Store.Telemetry.event([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
           {:error, reason}
 
         {:error, reason} ->
-          require Logger
           Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
+          S2.Store.Telemetry.event([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
           {:error, reason}
       end
     end)

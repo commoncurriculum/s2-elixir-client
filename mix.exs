@@ -24,8 +24,7 @@ defmodule S2.MixProject do
 
   def application do
     [
-      extra_applications: [:logger],
-      mod: {S2.Application, []}
+      extra_applications: [:logger]
     ]
   end
 

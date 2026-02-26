@@ -58,27 +58,35 @@ defmodule S2.Store.StreamWorker do
   end
 
   def handle_call({:append, message, serializer}, _from, state) do
-    with :ok <- check_backpressure(state) do
-      case safe_prepare(state.writer, message, serializer) do
-        {:error, reason} ->
-          {:reply, {:error, {:serialization_error, reason}}, state}
+    case check_backpressure(state) do
+      {:error, :overloaded} ->
+        {:reply, {:error, :overloaded}, state}
 
-        {:ok, input, writer} ->
-          run_append(state, input, writer, %{stream: state.stream})
-      end
+      :ok ->
+        case safe_prepare(state.writer, message, serializer) do
+          {:error, reason} ->
+            {:reply, {:error, {:serialization_error, reason}}, state}
+
+          {:ok, input, writer} ->
+            run_append(state, input, writer, %{stream: state.stream})
+        end
     end
   end
 
   @impl true
   def handle_call({:append_batch, messages, serializer}, _from, state) do
-    with :ok <- check_backpressure(state) do
-      case safe_prepare_batch(state.writer, messages, serializer) do
-        {:error, reason} ->
-          {:reply, {:error, {:serialization_error, reason}}, state}
+    case check_backpressure(state) do
+      {:error, :overloaded} ->
+        {:reply, {:error, :overloaded}, state}
 
-        {:ok, input, writer} ->
-          run_append(state, input, writer, %{stream: state.stream, count: length(messages)})
-      end
+      :ok ->
+        case safe_prepare_batch(state.writer, messages, serializer) do
+          {:error, reason} ->
+            {:reply, {:error, {:serialization_error, reason}}, state}
+
+          {:ok, input, writer} ->
+            run_append(state, input, writer, %{stream: state.stream, count: length(messages)})
+        end
     end
   end
 
@@ -184,7 +192,7 @@ defmodule S2.Store.StreamWorker do
     {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
 
     if queue_len > state.config.max_queue_size do
-      {:reply, {:error, :overloaded}, state}
+      {:error, :overloaded}
     else
       :ok
     end

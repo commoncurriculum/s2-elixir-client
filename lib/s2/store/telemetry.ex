@@ -29,6 +29,11 @@ defmodule S2.Store.Telemetry do
   Emitted as a single event when a listener establishes its initial connection.
   - Measurements: `%{system_time: integer}`
   - Metadata: `%{stream: String.t()}`
+
+  ### `[:s2, :store, :listener, :failed]`
+  Emitted when a listener fails to start (connection or session error).
+  - Measurements: `%{system_time: integer}`
+  - Metadata: `%{stream: String.t(), reason: term()}`
   """
 
   @doc """

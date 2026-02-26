@@ -91,13 +91,15 @@ defmodule S2.Store do
       end
 
       def append(stream, message, serializer \\ @serializer) do
-        S2.Store.Supervisor.ensure_worker(__MODULE__, stream)
-        S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer)
+        with {:ok, _pid} <- S2.Store.Supervisor.ensure_worker(__MODULE__, stream) do
+          S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer)
+        end
       end
 
       def append_batch(stream, messages, serializer \\ @serializer) when is_list(messages) do
-        S2.Store.Supervisor.ensure_worker(__MODULE__, stream)
-        S2.Store.StreamWorker.append_batch(__MODULE__, stream, messages, serializer)
+        with {:ok, _pid} <- S2.Store.Supervisor.ensure_worker(__MODULE__, stream) do
+          S2.Store.StreamWorker.append_batch(__MODULE__, stream, messages, serializer)
+        end
       end
 
       def create_stream(stream) do

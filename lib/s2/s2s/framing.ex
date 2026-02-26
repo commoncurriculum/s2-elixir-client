@@ -9,6 +9,8 @@ defmodule S2.S2S.Framing do
 
   import Bitwise
 
+  @ezstd_available Code.ensure_loaded?(:ezstd)
+
   @terminal_bit 0x80
   @compression_mask 0x60
   # Note: the 24-bit length prefix naturally caps frames at ~16 MiB (0xFFFFFF bytes).
@@ -111,7 +113,7 @@ defmodule S2.S2S.Framing do
   end
 
   defp decompress(body, :zstd) do
-    if Code.ensure_loaded?(:ezstd) do
+    if @ezstd_available do
       {:ok, :ezstd.decompress(body)}
     else
       {:error, {:missing_dependency, :ezstd, "add {:ezstd, \"~> 1.1\"} to your deps for zstd support"}}
@@ -125,7 +127,7 @@ defmodule S2.S2S.Framing do
   end
 
   defp ensure_ezstd! do
-    unless Code.ensure_loaded?(:ezstd) do
+    unless @ezstd_available do
       raise ArgumentError,
         "zstd compression requires the :ezstd dependency. Add {:ezstd, \"~> 1.1\"} to your mix.exs deps."
     end
