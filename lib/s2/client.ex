@@ -90,12 +90,7 @@ defmodule S2.Client do
         handle_response(status, resp_body, response_specs)
 
       {:error, exception} ->
-        message =
-          if is_exception(exception),
-            do: Exception.message(exception),
-            else: inspect(exception)
-
-        {:error, %S2.Error{status: nil, message: message}}
+        {:error, %S2.Error{status: nil, message: Exception.message(exception)}}
     end
   end
 

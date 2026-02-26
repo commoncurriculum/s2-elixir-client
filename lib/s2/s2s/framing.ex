@@ -126,8 +126,6 @@ defmodule S2.S2S.Framing do
         {:error, reason} -> {:error, {:decompression_error, :zstd, reason}}
         decompressed when is_binary(decompressed) -> {:ok, decompressed}
       end
-    rescue
-      e -> {:error, {:decompression_error, :zstd, e}}
     end
   else
     defp decompress(_body, :zstd) do
