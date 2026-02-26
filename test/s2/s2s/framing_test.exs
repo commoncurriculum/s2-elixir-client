@@ -46,6 +46,20 @@ defmodule S2.S2S.FramingTest do
         Framing.encode("data", compression: :deflate)
       end
     end
+
+    test "raises when body exceeds 24-bit max frame size" do
+      # 0xFFFFFF - 1 = max body, so 0xFFFFFF should be too large
+      big = :binary.copy(<<0>>, 0xFFFFFF)
+
+      assert_raise ArgumentError, ~r/frame body too large/, fn ->
+        Framing.encode(big)
+      end
+    end
+
+    test "encodes terminal frame" do
+      frame = Framing.encode("error", terminal: true)
+      assert {:ok, %{terminal: true, body: "error"}, <<>>} = Framing.decode(frame)
+    end
   end
 
   describe "decode/1" do

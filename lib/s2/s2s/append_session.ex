@@ -154,42 +154,49 @@ defmodule S2.S2S.AppendSession do
     end
   end
 
+  @doc false
+  def handle_ack_response({:ok, conn, responses}, session, acc) do
+    session = %{session | conn: conn}
+    new_data = Shared.extract_data(responses, session.request_ref)
+    all_data = acc <> new_data
+
+    case Shared.check_buffer_size(all_data) do
+      {:error, :buffer_overflow} ->
+        {:error, :buffer_overflow, Shared.close_session(%{session | data: all_data})}
+
+      :ok ->
+        done? = Shared.done?(responses, session.request_ref)
+
+        case Shared.decode_frame(all_data, S2.V1.AppendAck) do
+          {:ok, ack, rest} ->
+            {:ok, ack, %{session | data: rest}}
+
+          {:error, reason} ->
+            {:error, reason, Shared.close_session(session)}
+
+          :incomplete when done? ->
+            {:error, :incomplete_frame, Shared.close_session(session)}
+
+          :incomplete ->
+            {:continue, session, all_data}
+        end
+    end
+  end
+
+  def handle_ack_response({:error, conn, _error, _responses}, session, _acc) do
+    {:error, :stream_error, Shared.close_session(session, conn)}
+  end
+
+  def handle_ack_response(:unknown, session, acc) do
+    {:continue, session, acc}
+  end
+
   defp do_receive_ack(session, acc, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(session.conn, message) do
-          {:ok, conn, responses} ->
-            session = %{session | conn: conn}
-            new_data = Shared.extract_data(responses, session.request_ref)
-            all_data = acc <> new_data
-
-            case Shared.check_buffer_size(all_data) do
-              {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, Shared.close_session(%{session | data: all_data})}
-
-              :ok ->
-                done? = Shared.done?(responses, session.request_ref)
-
-                case Shared.decode_frame(all_data, S2.V1.AppendAck) do
-                  {:ok, ack, rest} ->
-                    {:ok, ack, %{session | data: rest}}
-
-                  {:error, reason} ->
-                    {:error, reason, Shared.close_session(session)}
-
-                  :incomplete when done? ->
-                    {:error, :incomplete_frame, Shared.close_session(session)}
-
-                  :incomplete ->
-                    do_receive_ack(session, all_data, dl)
-                end
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, Shared.close_session(session, conn)}
-
-          :unknown ->
-            do_receive_ack(session, acc, dl)
+        case handle_ack_response(Mint.HTTP2.stream(session.conn, message), session, acc) do
+          {:continue, session, acc} -> do_receive_ack(session, acc, dl)
+          result -> result
         end
     after
       Shared.remaining(dl) -> {:error, :timeout, Shared.close_session(session)}
@@ -203,24 +210,31 @@ defmodule S2.S2S.AppendSession do
     drain_final_response(session, Shared.deadline(session.recv_timeout))
   end
 
+  @doc false
+  def handle_drain_response({:ok, conn, responses}, session) do
+    session = %{session | conn: conn}
+
+    if Shared.done?(responses, session.request_ref) do
+      {:ok, session}
+    else
+      {:continue, session}
+    end
+  end
+
+  def handle_drain_response({:error, conn, _error, _responses}, session) do
+    {:ok, %{session | conn: conn}}
+  end
+
+  def handle_drain_response(:unknown, session) do
+    {:continue, session}
+  end
+
   defp drain_final_response(session, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(session.conn, message) do
-          {:ok, conn, responses} ->
-            session = %{session | conn: conn}
-
-            if Shared.done?(responses, session.request_ref) do
-              {:ok, session}
-            else
-              drain_final_response(session, dl)
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:ok, %{session | conn: conn}}
-
-          :unknown ->
-            drain_final_response(session, dl)
+        case handle_drain_response(Mint.HTTP2.stream(session.conn, message), session) do
+          {:continue, session} -> drain_final_response(session, dl)
+          result -> result
         end
     after
       Shared.remaining(dl) -> {:ok, session}

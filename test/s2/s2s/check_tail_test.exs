@@ -76,4 +76,54 @@ defmodule S2.S2S.CheckTailTest do
                S2.S2S.CheckTail.call(conn, "nonexistent-basin", "some-stream")
     end
   end
+
+  describe "parse_tail_response/2" do
+    test "parses valid tail with seq_num and timestamp" do
+      data = Jason.encode!(%{"tail" => %{"seq_num" => 5, "timestamp" => 1000}})
+
+      assert {:ok, %S2.V1.StreamPosition{seq_num: 5, timestamp: 1000}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response(data, :conn)
+    end
+
+    test "parses tail with seq_num but no timestamp" do
+      data = Jason.encode!(%{"tail" => %{"seq_num" => 0}})
+
+      assert {:ok, %S2.V1.StreamPosition{seq_num: 0, timestamp: 0}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response(data, :conn)
+    end
+
+    test "returns error for invalid tail fields" do
+      data = Jason.encode!(%{"tail" => %{"seq_num" => "not_int"}})
+
+      assert {:error, %S2.Error{message: msg}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response(data, :conn)
+
+      assert msg =~ "invalid tail fields"
+    end
+
+    test "returns error when tail key is missing" do
+      data = Jason.encode!(%{"other" => "stuff"})
+
+      assert {:error, %S2.Error{message: msg}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response(data, :conn)
+
+      assert msg =~ "missing tail key"
+    end
+
+    test "returns error for non-JSON data" do
+      assert {:error, %S2.Error{message: msg}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response("not json", :conn)
+
+      assert msg =~ "failed to decode"
+    end
+
+    test "returns error for negative seq_num" do
+      data = Jason.encode!(%{"tail" => %{"seq_num" => -1}})
+
+      assert {:error, %S2.Error{message: msg}, :conn} =
+               S2.S2S.CheckTail.parse_tail_response(data, :conn)
+
+      assert msg =~ "invalid tail fields"
+    end
+  end
 end

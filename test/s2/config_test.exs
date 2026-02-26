@@ -38,5 +38,16 @@ defmodule S2.ConfigTest do
         S2.Config.new(base_url: "")
       end
     end
+
+    test "strips trailing slash from base_url" do
+      config = S2.Config.new(base_url: "http://localhost:4243/")
+      assert config.base_url == "http://localhost:4243"
+    end
+
+    test "raises on ftp scheme" do
+      assert_raise ArgumentError, ~r/scheme/, fn ->
+        S2.Config.new(base_url: "ftp://example.com")
+      end
+    end
   end
 end

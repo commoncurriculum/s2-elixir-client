@@ -49,42 +49,54 @@ defmodule S2.S2S.Read do
     end
   end
 
+  @doc false
+  def handle_first_batch_response({:ok, conn, responses}, request_ref, acc) do
+    acc = Shared.process_responses(responses, request_ref, acc)
+
+    cond do
+      acc[:done] ->
+        handle_complete_response(acc, conn)
+
+      acc[:status] != nil and acc[:status] != 200 ->
+        {:continue, conn, acc}
+
+      acc[:status] == 200 ->
+        case Shared.check_buffer_size(acc.data) do
+          {:error, :buffer_overflow} ->
+            {:error, :buffer_overflow, conn}
+
+          :ok ->
+            case Shared.decode_read_batch(acc.data) do
+              {:ok, batch, _rest} -> {:ok_cancel, batch, conn, request_ref}
+              :incomplete -> {:continue, conn, acc}
+              {:error, reason} -> {:error, reason, conn}
+            end
+        end
+
+      true ->
+        {:continue, conn, acc}
+    end
+  end
+
+  def handle_first_batch_response({:error, conn, _error, _responses}, _request_ref, _acc) do
+    {:error, :stream_error, conn}
+  end
+
+  def handle_first_batch_response(:unknown, conn, acc) do
+    {:continue, conn, acc}
+  end
+
   defp receive_first_batch(conn, request_ref, acc, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(conn, message) do
-          {:ok, conn, responses} ->
-            acc = Shared.process_responses(responses, request_ref, acc)
-
-            cond do
-              acc[:done] ->
-                handle_complete_response(acc, conn)
-
-              acc[:status] != nil and acc[:status] != 200 ->
-                receive_first_batch(conn, request_ref, acc, dl)
-
-              acc[:status] == 200 ->
-                case Shared.check_buffer_size(acc.data) do
-                  {:error, :buffer_overflow} ->
-                    {:error, :buffer_overflow, conn}
-
-                  :ok ->
-                    case Shared.decode_read_batch(acc.data) do
-                      {:ok, batch, _rest} -> cancel_and_return(conn, request_ref, batch)
-                      :incomplete -> receive_first_batch(conn, request_ref, acc, dl)
-                      {:error, reason} -> {:error, reason, conn}
-                    end
-                end
-
-              true ->
-                receive_first_batch(conn, request_ref, acc, dl)
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, conn}
-
-          :unknown ->
-            receive_first_batch(conn, request_ref, acc, dl)
+        case handle_first_batch_response(
+               Mint.HTTP2.stream(conn, message),
+               request_ref,
+               acc
+             ) do
+          {:continue, conn, acc} -> receive_first_batch(conn, request_ref, acc, dl)
+          {:ok_cancel, batch, conn, ref} -> cancel_and_return(conn, ref, batch)
+          result -> result
         end
     after
       Shared.remaining(dl) -> {:error, :timeout, conn}

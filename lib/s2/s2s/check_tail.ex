@@ -53,7 +53,8 @@ defmodule S2.S2S.CheckTail do
     end
   end
 
-  defp parse_tail_response(data, conn) do
+  @doc false
+  def parse_tail_response(data, conn) do
     case Jason.decode(data) do
       {:ok, %{"tail" => %{"seq_num" => seq_num, "timestamp" => timestamp}}}
       when is_integer(seq_num) and seq_num >= 0 and is_integer(timestamp) and timestamp >= 0 ->

@@ -46,31 +46,37 @@ defmodule S2.S2S.Shared do
     do_receive_complete(conn, request_ref, %{status: nil, data: <<>>}, dl)
   end
 
+  @doc false
+  def handle_complete_response({:ok, conn, responses}, request_ref, acc) do
+    acc = process_responses(responses, request_ref, acc)
+
+    case check_buffer_size(acc.data) do
+      {:error, :buffer_overflow} ->
+        {:error, :buffer_overflow, conn}
+
+      :ok ->
+        if acc[:done] do
+          {:ok, acc, conn}
+        else
+          {:continue, conn, acc}
+        end
+    end
+  end
+
+  def handle_complete_response({:error, updated_conn, _error, _responses}, _request_ref, _acc) do
+    {:error, :stream_error, updated_conn}
+  end
+
+  def handle_complete_response(:unknown, conn, acc) do
+    {:continue, conn, acc}
+  end
+
   defp do_receive_complete(conn, request_ref, acc, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(conn, message) do
-          {:ok, conn, responses} ->
-            acc = process_responses(responses, request_ref, acc)
-
-            case check_buffer_size(acc.data) do
-              {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, conn}
-
-              :ok ->
-                if acc[:done] do
-                  {:ok, acc, conn}
-                else
-                  do_receive_complete(conn, request_ref, acc, dl)
-                end
-            end
-
-          {:error, updated_conn, _error, _responses} ->
-            # Use Mint's updated conn — it may have cleaned up stream state.
-            {:error, :stream_error, updated_conn}
-
-          :unknown ->
-            do_receive_complete(conn, request_ref, acc, dl)
+        case handle_complete_response(Mint.HTTP2.stream(conn, message), request_ref, acc) do
+          {:continue, conn, acc} -> do_receive_complete(conn, request_ref, acc, dl)
+          result -> result
         end
     after
       remaining(dl) -> {:error, :timeout, conn}
@@ -319,23 +325,31 @@ defmodule S2.S2S.Shared do
     do_wait_for_headers(conn, request_ref, deadline(recv_timeout))
   end
 
+  @doc false
+  def handle_headers_response({:ok, conn, responses}, request_ref) do
+    {status, data} = extract_status_and_data(responses, request_ref)
+
+    if status != nil do
+      {:ok, status, data, conn}
+    else
+      {:continue, conn}
+    end
+  end
+
+  def handle_headers_response({:error, conn, _error, _responses}, _request_ref) do
+    {:error, :stream_error, conn}
+  end
+
+  def handle_headers_response(:unknown, conn) do
+    {:continue, conn}
+  end
+
   defp do_wait_for_headers(conn, request_ref, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(conn, message) do
-          {:ok, conn, responses} ->
-            {status, data} = extract_status_and_data(responses, request_ref)
-
-            cond do
-              status != nil -> {:ok, status, data, conn}
-              true -> do_wait_for_headers(conn, request_ref, dl)
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, conn}
-
-          :unknown ->
-            do_wait_for_headers(conn, request_ref, dl)
+        case handle_headers_response(Mint.HTTP2.stream(conn, message), request_ref) do
+          {:continue, conn} -> do_wait_for_headers(conn, request_ref, dl)
+          result -> result
         end
     after
       remaining(dl) -> {:error, :timeout, conn}

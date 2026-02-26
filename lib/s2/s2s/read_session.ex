@@ -135,47 +135,53 @@ defmodule S2.S2S.ReadSession do
     receive_batch(session, Shared.deadline(session.recv_timeout))
   end
 
+  @doc false
+  def handle_batch_response({:ok, conn, responses}, session, acc) do
+    session = %{session | conn: conn}
+    new_data = Shared.extract_data(responses, session.request_ref)
+    all_data = acc <> new_data
+
+    case Shared.check_buffer_size(all_data) do
+      {:error, :buffer_overflow} ->
+        {:error, :buffer_overflow, Shared.close_session(session)}
+
+      :ok ->
+        done? = Shared.done?(responses, session.request_ref)
+
+        case Shared.decode_read_batch(all_data) do
+          {:ok, batch, rest} ->
+            {:ok, batch, %{session | data: rest}}
+
+          :incomplete when done? ->
+            {:error, :end_of_stream, Shared.close_session(session)}
+
+          :incomplete ->
+            {:continue, %{session | data: all_data}, all_data}
+
+          {:error, reason} ->
+            {:error, reason, Shared.close_session(session)}
+        end
+    end
+  end
+
+  def handle_batch_response({:error, conn, _error, _responses}, session, _acc) do
+    {:error, :stream_error, Shared.close_session(session, conn)}
+  end
+
+  def handle_batch_response(:unknown, session, acc) do
+    {:continue, session, acc}
+  end
+
   defp receive_batch(session, dl) do
     receive do
       message ->
-        case Mint.HTTP2.stream(session.conn, message) do
-          {:ok, conn, responses} ->
-            session = %{session | conn: conn}
-            new_data = Shared.extract_data(responses, session.request_ref)
-            all_data = session.data <> new_data
-
-            case Shared.check_buffer_size(all_data) do
-              {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, Shared.close_session(session)}
-
-              :ok ->
-                done? = Shared.done?(responses, session.request_ref)
-
-                case Shared.decode_read_batch(all_data) do
-                  {:ok, batch, rest} ->
-                    {:ok, batch, %{session | data: rest}}
-
-                  # :incomplete after done means the server closed the stream.
-                  # decode_read_batch already skips heartbeat frames internally,
-                  # so :incomplete here means either empty remaining data (clean
-                  # EOF after heartbeats) or a truly truncated frame (server bug).
-                  # Both are end_of_stream — no more data will arrive.
-                  :incomplete when done? ->
-                    {:error, :end_of_stream, Shared.close_session(session)}
-
-                  :incomplete ->
-                    receive_batch(%{session | data: all_data}, dl)
-
-                  {:error, reason} ->
-                    {:error, reason, Shared.close_session(session)}
-                end
-            end
-
-          {:error, conn, _error, _responses} ->
-            {:error, :stream_error, Shared.close_session(session, conn)}
-
-          :unknown ->
-            receive_batch(session, dl)
+        case handle_batch_response(
+               Mint.HTTP2.stream(session.conn, message),
+               session,
+               session.data
+             ) do
+          {:continue, session, _acc} -> receive_batch(session, dl)
+          result -> result
         end
     after
       Shared.remaining(dl) -> {:error, :timeout, Shared.close_session(session)}

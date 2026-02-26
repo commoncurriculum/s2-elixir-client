@@ -97,6 +97,53 @@ defmodule S2.S2S.SharedTest do
     end
   end
 
+  describe "process_responses/3" do
+    test "accumulates status, data, and done" do
+      ref = make_ref()
+
+      responses = [
+        {:status, ref, 200},
+        {:headers, ref, [{"content-type", "s2s/proto"}]},
+        {:data, ref, "hello"},
+        {:data, ref, " world"},
+        {:done, ref}
+      ]
+
+      acc = Shared.process_responses(responses, ref, %{status: nil, data: <<>>})
+      assert acc.status == 200
+      assert acc.data == "hello world"
+      assert acc.done == true
+    end
+
+    test "ignores responses for different refs" do
+      ref = make_ref()
+      other = make_ref()
+      responses = [{:status, other, 200}, {:data, other, "nope"}]
+      acc = Shared.process_responses(responses, ref, %{status: nil, data: <<>>})
+      assert acc.status == nil
+      assert acc.data == <<>>
+    end
+  end
+
+  describe "build_headers/3" do
+    test "includes content-type by default" do
+      headers = Shared.build_headers("my-basin", nil)
+      assert {"content-type", "s2s/proto"} in headers
+      assert {"s2-basin", "my-basin"} in headers
+    end
+
+    test "excludes content-type when opted out" do
+      headers = Shared.build_headers("my-basin", nil, content_type: false)
+      refute Enum.any?(headers, fn {k, _} -> k == "content-type" end)
+      assert {"s2-basin", "my-basin"} in headers
+    end
+
+    test "includes auth header when token provided" do
+      headers = Shared.build_headers("basin", "tok123")
+      assert {"authorization", "Bearer tok123"} in headers
+    end
+  end
+
   describe "encode_framed/1" do
     test "encodes a protobuf struct into an S2S frame" do
       input = %S2.V1.AppendInput{
@@ -209,6 +256,95 @@ defmodule S2.S2S.SharedTest do
       # Create a binary just over the 16MiB limit
       big = :binary.copy(<<0>>, 16 * 1024 * 1024 + 1)
       assert {:error, :buffer_overflow} = Shared.check_buffer_size(big)
+    end
+  end
+
+  describe "handle_complete_response/3" do
+    test "returns {:ok, acc, conn} when done" do
+      ref = make_ref()
+      responses = [{:status, ref, 200}, {:data, ref, "body"}, {:done, ref}]
+
+      assert {:ok, acc, :new_conn} =
+               Shared.handle_complete_response({:ok, :new_conn, responses}, ref, %{
+                 status: nil,
+                 data: <<>>
+               })
+
+      assert acc.status == 200
+      assert acc.data == "body"
+      assert acc.done == true
+    end
+
+    test "returns :continue when not done" do
+      ref = make_ref()
+      responses = [{:status, ref, 200}, {:data, ref, "partial"}]
+
+      assert {:continue, :new_conn, acc} =
+               Shared.handle_complete_response({:ok, :new_conn, responses}, ref, %{
+                 status: nil,
+                 data: <<>>
+               })
+
+      assert acc.data == "partial"
+    end
+
+    test "returns buffer_overflow for oversized data" do
+      ref = make_ref()
+      big = :binary.copy(<<0>>, 16 * 1024 * 1024 + 1)
+      responses = [{:data, ref, big}]
+
+      assert {:error, :buffer_overflow, :new_conn} =
+               Shared.handle_complete_response({:ok, :new_conn, responses}, ref, %{
+                 status: nil,
+                 data: <<>>
+               })
+    end
+
+    test "returns stream_error on Mint error" do
+      ref = make_ref()
+
+      assert {:error, :stream_error, :err_conn} =
+               Shared.handle_complete_response(
+                 {:error, :err_conn, :protocol_error, []},
+                 ref,
+                 %{status: nil, data: <<>>}
+               )
+    end
+
+    test "returns :continue on unknown message" do
+      ref = make_ref()
+
+      assert {:continue, :conn, %{data: <<>>}} =
+               Shared.handle_complete_response(:unknown, :conn, %{status: nil, data: <<>>})
+    end
+  end
+
+  describe "handle_headers_response/2" do
+    test "returns {:ok, status, data, conn} when status present" do
+      ref = make_ref()
+      responses = [{:status, ref, 200}, {:data, ref, "init"}]
+
+      assert {:ok, 200, "init", :new_conn} =
+               Shared.handle_headers_response({:ok, :new_conn, responses}, ref)
+    end
+
+    test "returns :continue when no status yet" do
+      ref = make_ref()
+      responses = [{:headers, ref, []}]
+
+      assert {:continue, :new_conn} =
+               Shared.handle_headers_response({:ok, :new_conn, responses}, ref)
+    end
+
+    test "returns stream_error on Mint error" do
+      ref = make_ref()
+
+      assert {:error, :stream_error, :err_conn} =
+               Shared.handle_headers_response({:error, :err_conn, :closed, []}, ref)
+    end
+
+    test "returns :continue on unknown message" do
+      assert {:continue, :conn} = Shared.handle_headers_response(:unknown, :conn)
     end
   end
 

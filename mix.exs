@@ -17,6 +17,17 @@ defmodule S2.MixProject do
       description: "Elixir client for the S2 durable stream API",
       source_url: @source_url,
       homepage_url: "https://s2.dev",
+      test_coverage: [
+        ignore_modules: [
+          # Generated protobuf structs
+          ~r/^S2\.V1\./,
+          # Generated API schema structs (request/response types)
+          ~r/^S2\.(?:AccessToken|Accumulation|Basin|Create|Delete|Gauge|Issue|Label|List|Metric|Permitted|ReadWrite|Scalar|Stream|Timestamping)/,
+          S2.Proto.Messages,
+          S2.ErrorInfo
+        ],
+        summary: [threshold: 84]
+      ],
       docs: docs(),
       package: package()
     ]

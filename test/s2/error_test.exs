@@ -26,4 +26,41 @@ defmodule S2.ErrorTest do
       assert error.message == nil
     end
   end
+
+  describe "message/1" do
+    test "nil status, nil code, message provided" do
+      assert Exception.message(%S2.Error{message: "oops"}) == "oops"
+    end
+
+    test "nil status, nil code, nil message" do
+      assert Exception.message(%S2.Error{}) == "unknown error"
+    end
+
+    test "nil status, code provided, nil message" do
+      assert Exception.message(%S2.Error{code: "not_found"}) == "(not_found)"
+    end
+
+    test "nil status, code and message provided" do
+      assert Exception.message(%S2.Error{code: "not_found", message: "gone"}) ==
+               "(not_found): gone"
+    end
+
+    test "status provided, nil code, nil message" do
+      assert Exception.message(%S2.Error{status: 500}) == "HTTP 500"
+    end
+
+    test "status provided, nil code, message provided" do
+      assert Exception.message(%S2.Error{status: 500, message: "bad"}) == "HTTP 500: bad"
+    end
+
+    test "status and code provided, nil message" do
+      assert Exception.message(%S2.Error{status: 404, code: "not_found"}) ==
+               "HTTP 404 (not_found)"
+    end
+
+    test "all fields provided" do
+      assert Exception.message(%S2.Error{status: 400, code: "invalid", message: "bad input"}) ==
+               "HTTP 400 (invalid): bad input"
+    end
+  end
 end
