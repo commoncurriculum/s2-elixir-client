@@ -36,7 +36,8 @@ defmodule S2.Store.StreamWorker do
            stream: stream,
            session: session,
            writer: Serialization.writer(),
-           connector: Connector.connected(connector)
+           connector: Connector.connected(connector),
+           reconnect_ref: nil
          }}
 
       {:error, reason} ->
@@ -96,15 +97,32 @@ defmodule S2.Store.StreamWorker do
   @impl true
   def handle_info({:reconnected, session}, state) do
     Logger.debug("S2 StreamWorker reconnected stream=#{state.stream}")
-    {:noreply, %{state | session: session, connector: Connector.connected(state.connector)}}
+
+    {:noreply,
+     %{
+       state
+       | session: session,
+         reconnect_ref: nil,
+         connector: Connector.connected(state.connector)
+     }}
   end
 
   def handle_info({:reconnect_failed, _reason}, state) do
-    schedule_reconnect(state)
+    schedule_reconnect(%{state | reconnect_ref: nil})
   end
 
   def handle_info(:reconnect, state) do
-    spawn_reconnect_task(state)
+    ref = spawn_reconnect_task(state)
+    {:noreply, %{state | reconnect_ref: ref}}
+  end
+
+  # Reconnect task crashed without sending a message — treat as failed reconnect
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{reconnect_ref: ref} = state) do
+    schedule_reconnect(%{state | reconnect_ref: nil})
+  end
+
+  # Discard stale Mint TCP messages from previous connections
+  def handle_info(_msg, state) do
     {:noreply, state}
   end
 
@@ -165,30 +183,35 @@ defmodule S2.Store.StreamWorker do
 
     metadata = %{stream: stream, component: :writer, attempt: state.connector.attempt}
 
-    Task.start(fn ->
-      result =
-        :telemetry.span([:s2, :store, :reconnect], metadata, fn ->
-          case open_session(config, stream) do
-            {:ok, session} ->
-              case Mint.HTTP2.controlling_process(session.conn, parent) do
-                {:ok, new_conn} ->
-                  session = %{session | conn: new_conn, owner_pid: parent}
-                  {{:ok, session}, metadata}
+    {:ok, pid} =
+      Task.start(fn ->
+        result =
+          :telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+            case open_session(config, stream) do
+              {:ok, session} ->
+                case Mint.HTTP2.controlling_process(session.conn, parent) do
+                  {:ok, new_conn} ->
+                    session = %{session | conn: new_conn, owner_pid: parent}
+                    {{:ok, session}, metadata}
 
-                {:error, reason} ->
-                  {{:error, reason}, Map.put(metadata, :error, :transfer_failed)}
-              end
+                  {:error, reason} ->
+                    # Close the session to avoid leaking the connection
+                    S2.S2S.AppendSession.close(session)
+                    {{:error, reason}, Map.put(metadata, :error, :transfer_failed)}
+                end
 
-            {:error, reason} ->
-              {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
-          end
-        end)
+              {:error, reason} ->
+                {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
+            end
+          end)
 
-      case result do
-        {:ok, session} -> send(parent, {:reconnected, session})
-        {:error, reason} -> send(parent, {:reconnect_failed, reason})
-      end
-    end)
+        case result do
+          {:ok, session} -> send(parent, {:reconnected, session})
+          {:error, reason} -> send(parent, {:reconnect_failed, reason})
+        end
+      end)
+
+    Process.monitor(pid)
   end
 
   defp check_backpressure(state) do

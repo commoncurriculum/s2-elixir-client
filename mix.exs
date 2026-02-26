@@ -45,6 +45,9 @@ defmodule S2.MixProject do
         "S2.Patterns.Serialization"
       ],
       groups_for_modules: [
+        Overview: [
+          S2
+        ],
         Store: [
           S2.Store
         ],
@@ -64,6 +67,9 @@ defmodule S2.MixProject do
           S2.S2S.ReadSession,
           S2.S2S.CheckTail,
           S2.S2S.Framing
+        ],
+        Patterns: [
+          S2.Patterns.Serialization
         ],
         "Schemas (Generated)":
           ~r/^S2\.(?!V1\.|S2S\.|Store|Client|Config|Error|Basins|Streams|AccessTokens|Metrics|Patterns)/,

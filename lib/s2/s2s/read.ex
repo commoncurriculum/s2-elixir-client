@@ -64,10 +64,16 @@ defmodule S2.S2S.Read do
                 receive_first_batch(conn, request_ref, acc, dl)
 
               acc[:status] == 200 ->
-                case Shared.decode_read_batch(acc.data) do
-                  {:ok, batch, _rest} -> {:ok, batch, conn}
-                  :incomplete -> receive_first_batch(conn, request_ref, acc, dl)
-                  {:error, reason} -> {:error, reason, conn}
+                case Shared.check_buffer_size(acc.data) do
+                  {:error, :buffer_overflow} ->
+                    {:error, :buffer_overflow, conn}
+
+                  :ok ->
+                    case Shared.decode_read_batch(acc.data) do
+                      {:ok, batch, _rest} -> cancel_and_return(conn, request_ref, batch)
+                      :incomplete -> receive_first_batch(conn, request_ref, acc, dl)
+                      {:error, reason} -> {:error, reason, conn}
+                    end
                 end
 
               true ->
@@ -82,6 +88,15 @@ defmodule S2.S2S.Read do
         end
     after
       Shared.remaining(dl) -> {:error, :timeout, conn}
+    end
+  end
+
+  # Cancel the streaming request to prevent orphaned HTTP/2 frames from
+  # accumulating in the caller's mailbox after we return.
+  defp cancel_and_return(conn, request_ref, batch) do
+    case Mint.HTTP2.cancel_request(conn, request_ref) do
+      {:ok, conn} -> {:ok, batch, conn}
+      {:error, conn, _reason} -> {:ok, batch, conn}
     end
   end
 

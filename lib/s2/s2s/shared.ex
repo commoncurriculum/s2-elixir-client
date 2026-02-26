@@ -53,10 +53,16 @@ defmodule S2.S2S.Shared do
           {:ok, conn, responses} ->
             acc = process_responses(responses, request_ref, acc)
 
-            if acc[:done] do
-              {:ok, acc, conn}
-            else
-              do_receive_complete(conn, request_ref, acc, dl)
+            case check_buffer_size(acc.data) do
+              {:error, :buffer_overflow} ->
+                {:error, :buffer_overflow, conn}
+
+              :ok ->
+                if acc[:done] do
+                  {:ok, acc, conn}
+                else
+                  do_receive_complete(conn, request_ref, acc, dl)
+                end
             end
 
           {:error, updated_conn, _error, _responses} ->

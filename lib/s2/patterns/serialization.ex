@@ -28,12 +28,20 @@ defmodule S2.Patterns.Serialization do
   @type writer :: Dedupe.Writer.t()
   @type reader :: %{filter: Dedupe.Filter.t(), assembler: Framing.Assembler.t()}
 
+  @doc "Create a new writer state for stamping records with dedup headers."
   @spec writer() :: writer()
   def writer, do: Dedupe.Writer.new()
 
+  @doc "Create a new reader state for dedup filtering and chunk reassembly."
   @spec reader() :: reader()
   def reader, do: %{filter: Dedupe.Filter.new(), assembler: Framing.Assembler.new()}
 
+  @doc """
+  Serialize a term into an `%S2.V1.AppendInput{}` ready to send.
+
+  Applies serialization, chunking, framing, and dedup stamping. Returns
+  the input and updated writer state (for monotonic dedup sequence).
+  """
   @spec prepare(writer(), term(), serializer()) :: {S2.V1.AppendInput.t(), writer()}
   def prepare(writer, message, serializer) do
     bytes = serializer.serialize.(message)

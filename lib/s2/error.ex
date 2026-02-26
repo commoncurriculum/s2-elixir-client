@@ -24,6 +24,8 @@ defmodule S2.Error do
 
   @impl true
   def message(%__MODULE__{status: nil, code: nil, message: msg}), do: msg || "unknown error"
+  def message(%__MODULE__{status: nil, code: code, message: nil}), do: "(#{code})"
+  def message(%__MODULE__{status: nil, code: code, message: msg}), do: "(#{code}): #{msg}"
   def message(%__MODULE__{status: status, code: nil, message: nil}), do: "HTTP #{status}"
   def message(%__MODULE__{status: status, code: nil, message: msg}), do: "HTTP #{status}: #{msg}"
 

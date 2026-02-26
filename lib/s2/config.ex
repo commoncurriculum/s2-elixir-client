@@ -28,7 +28,7 @@ defmodule S2.Config do
     validate_base_url!(base_url)
 
     %__MODULE__{
-      base_url: base_url,
+      base_url: String.trim_trailing(base_url, "/"),
       token: Keyword.get(opts, :token)
     }
   end

@@ -30,6 +30,9 @@ defmodule S2.S2S.Framing do
 
   Raises `ArgumentError` for unsupported compression types.
   """
+  # Maximum frame size: 24-bit length field (0xFFFFFF = 16,777,215 bytes including flags byte).
+  @max_frame_body 0xFFFFFF - 1
+
   @spec encode(binary(), keyword()) :: binary()
   def encode(body, opts \\ []) do
     terminal = Keyword.get(opts, :terminal, false)
@@ -38,6 +41,11 @@ defmodule S2.S2S.Framing do
     compressed_body = compress(body, compression)
     flags = build_flags(terminal, compression)
     length = byte_size(compressed_body) + 1
+
+    if byte_size(compressed_body) > @max_frame_body do
+      raise ArgumentError,
+            "frame body too large: #{byte_size(compressed_body)} bytes exceeds 24-bit max (#{@max_frame_body})"
+    end
 
     <<length::24-big, flags, compressed_body::binary>>
   end

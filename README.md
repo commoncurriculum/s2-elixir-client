@@ -127,6 +127,13 @@ end
 
 All control plane functions take an opts keyword list with `server: client` (and `basin: "name"` where required).
 
+First, create a client:
+
+```elixir
+config = S2.Config.new(base_url: "https://aws.s2.dev", token: "my-token")
+client = S2.Client.new(config)
+```
+
 ### Basins
 
 ```elixir

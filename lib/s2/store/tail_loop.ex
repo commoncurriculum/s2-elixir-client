@@ -28,7 +28,17 @@ defmodule S2.Store.TailLoop do
             :telemetry.execute([:s2, :store, :decode_error], %{count: 1}, %{reason: reason})
 
           message ->
-            callback.(message)
+            try do
+              callback.(message)
+            rescue
+              e ->
+                Logger.error("S2 listener callback crashed: #{Exception.message(e)}")
+
+                :telemetry.execute([:s2, :store, :callback_error], %{count: 1}, %{
+                  exception: e,
+                  stacktrace: __STACKTRACE__
+                })
+            end
         end)
 
         next_seq = next_seq_num(batch.records, seq_num)
@@ -52,8 +62,9 @@ defmodule S2.Store.TailLoop do
             {:error, reason}
         end
 
-      {:error, _reason, _session} ->
-        :ok
+      {:error, reason, _session} ->
+        Logger.warning("S2 listener stopped due to error: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 

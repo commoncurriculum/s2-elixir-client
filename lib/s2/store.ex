@@ -109,6 +109,11 @@ defmodule S2.Store do
           call_timeout: Keyword.get(app_config, :call_timeout, 5_000)
         }
 
+        unless config.compression in [:none, :gzip, :zstd] do
+          raise ArgumentError,
+                "invalid compression: #{inspect(config.compression)}, must be :none, :gzip, or :zstd"
+        end
+
         S2.Store.Supervisor.start_link(config)
       end
 

@@ -6,6 +6,10 @@ defmodule S2.Client do
   by the operation modules (`S2.Basins`, `S2.Streams`, etc.) — you typically don't
   need to call this directly.
 
+  > **URL encoding note:** The generated operation modules interpolate resource names
+  > (basins, streams, token IDs) directly into URL path strings. Req handles URL
+  > encoding of these paths, so no additional escaping is needed in the operations layer.
+
   ## Example
 
       config = S2.Config.new(base_url: "https://aws.s2.dev", token: "my-token")
