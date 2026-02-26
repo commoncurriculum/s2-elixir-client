@@ -301,6 +301,8 @@ defmodule S2.S2S.Shared do
       {:error, reason} ->
         {:error, {:encode_error, reason}}
     end
+  rescue
+    e -> {:error, {:encode_error, e}}
   end
 
   @doc """

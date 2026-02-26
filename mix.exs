@@ -106,6 +106,7 @@ defmodule S2.MixProject do
       {:telemetry, "~> 1.0"},
       {:ezstd, "~> 1.1", optional: true},
       {:excoveralls, "~> 0.18", only: :test},
+      {:toxiproxy_ex, "~> 2.0", only: :test},
       {:ecto, "~> 3.12", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:oapi_generator, "~> 0.4.0", only: :dev, runtime: false}

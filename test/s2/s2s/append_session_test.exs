@@ -78,6 +78,16 @@ defmodule S2.S2S.AppendSessionTest do
       assert ack2.end.seq_num == 3
     end
 
+    test "returns encode error for invalid input struct", %{basin: basin, stream: stream} do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+      {:ok, session} = S2.S2S.AppendSession.open(conn, basin, stream)
+
+      bad_input = %S2.V1.AppendInput{records: "not_a_list"}
+
+      assert {:error, {:encode_error, _}, _session} =
+               S2.S2S.AppendSession.append(session, bad_input)
+    end
+
     test "returns error when session is closed", %{basin: basin, stream: stream} do
       {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
       {:ok, session} = S2.S2S.AppendSession.open(conn, basin, stream)

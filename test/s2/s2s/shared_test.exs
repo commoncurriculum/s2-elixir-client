@@ -285,18 +285,11 @@ defmodule S2.S2S.SharedTest do
   end
 
   describe "encode_framed/2 error path" do
-    test "returns encode_error on protobuf encode failure" do
-      # Create a struct that will fail to encode - we can test the success path
-      # since the error path requires a broken protobuf struct which is hard to construct
-      valid = %S2.V1.AppendInput{records: []}
-      assert {:ok, _frame} = Shared.encode_framed(valid)
-    end
-
-    test "returns encode_error when Protox.encode fails" do
-      # Protox.encode raises for non-protobuf structs, but the error path
-      # is for when Protox.encode returns {:error, reason} (future-proofing).
-      # We test the success path above; the error path is defensive code.
-      assert {:ok, _} = Shared.encode_framed(%S2.V1.AppendInput{records: []})
+    test "returns encode_error when struct has invalid field types" do
+      # Protox.encode raises for invalid field types (e.g. string where list expected)
+      # encode_framed rescues and returns {:error, {:encode_error, exception}}
+      bad_input = %S2.V1.AppendInput{records: "not_a_list"}
+      assert {:error, {:encode_error, %Protocol.UndefinedError{}}} = Shared.encode_framed(bad_input)
     end
   end
 

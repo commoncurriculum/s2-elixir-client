@@ -62,4 +62,14 @@ defmodule S2.S2S.AppendIntegrationTest do
     assert {:ok, %S2.V1.AppendAck{}, _conn} =
              S2.S2S.Append.call(conn, basin, stream, input, compression: :gzip)
   end
+
+  test "returns encode error for invalid input struct", %{basin: basin, stream: stream} do
+    {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+
+    # Use a record with wrong body type (integer instead of binary)
+    bad_input = %S2.V1.AppendInput{records: [%S2.V1.AppendRecord{body: 12345}]}
+
+    assert {:error, {:encode_error, %Protox.EncodingError{}}, _conn} =
+             S2.S2S.Append.call(conn, basin, stream, bad_input)
+  end
 end

@@ -21,8 +21,6 @@ defmodule S2.Patterns.Chunking do
     |> Enum.reverse()
   end
 
-  defp do_chunk(<<>>, acc), do: acc
-
   defp do_chunk(data, acc) when byte_size(data) <= @max_chunk_bytes do
     [data | acc]
   end
