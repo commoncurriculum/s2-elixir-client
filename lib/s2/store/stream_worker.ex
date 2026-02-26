@@ -12,14 +12,14 @@ defmodule S2.Store.StreamWorker do
     GenServer.start_link(__MODULE__, {config, stream}, name: name)
   end
 
-  def append(store, stream, message, serializer) do
+  def append(store, stream, message, serializer, call_timeout \\ 5_000) do
     name = S2.Store.Supervisor.stream_worker_name(store, stream)
-    GenServer.call(name, {:append, message, serializer})
+    GenServer.call(name, {:append, message, serializer}, call_timeout)
   end
 
-  def append_batch(store, stream, messages, serializer) do
+  def append_batch(store, stream, messages, serializer, call_timeout \\ 5_000) do
     name = S2.Store.Supervisor.stream_worker_name(store, stream)
-    GenServer.call(name, {:append_batch, messages, serializer})
+    GenServer.call(name, {:append_batch, messages, serializer}, call_timeout)
   end
 
   # --- Callbacks ---

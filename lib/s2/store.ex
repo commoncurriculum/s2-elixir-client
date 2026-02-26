@@ -37,6 +37,7 @@ defmodule S2.Store do
     * `:max_queue_size` — Maximum pending appends per stream worker before returning `{:error, :overloaded}` (default: 1000).
     * `:recv_timeout` — Timeout in milliseconds for individual S2S data plane operations (default: 5000).
     * `:compression` — Compression for S2S frames: `:none`, `:gzip`, or `:zstd` (default: `:none`). Zstd requires the optional `:ezstd` dependency.
+    * `:call_timeout` — Timeout in milliseconds for `append/2` and `append_batch/2` calls (default: 5000). Set higher if appends may take longer due to large payloads or high latency.
     * `:serializer` — A map with `:serialize` and `:deserialize` functions (default: JSON via Jason).
 
   ## Listener options
@@ -80,7 +81,8 @@ defmodule S2.Store do
           base_delay: Keyword.get(app_config, :base_delay, 500),
           max_queue_size: Keyword.get(app_config, :max_queue_size, 1000),
           recv_timeout: Keyword.get(app_config, :recv_timeout, 5_000),
-          compression: Keyword.get(app_config, :compression, :none)
+          compression: Keyword.get(app_config, :compression, :none),
+          call_timeout: Keyword.get(app_config, :call_timeout, 5_000)
         }
 
         S2.Store.Supervisor.start_link(config)
@@ -92,13 +94,15 @@ defmodule S2.Store do
 
       def append(stream, message, serializer \\ @serializer) do
         with {:ok, _pid} <- S2.Store.Supervisor.ensure_worker(__MODULE__, stream) do
-          S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer)
+          timeout = S2.Store.Supervisor.get_config(__MODULE__).call_timeout
+          S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer, timeout)
         end
       end
 
       def append_batch(stream, messages, serializer \\ @serializer) when is_list(messages) do
         with {:ok, _pid} <- S2.Store.Supervisor.ensure_worker(__MODULE__, stream) do
-          S2.Store.StreamWorker.append_batch(__MODULE__, stream, messages, serializer)
+          timeout = S2.Store.Supervisor.get_config(__MODULE__).call_timeout
+          S2.Store.StreamWorker.append_batch(__MODULE__, stream, messages, serializer, timeout)
         end
       end
 
@@ -157,7 +161,7 @@ defmodule S2.Store do
           end
 
           def stop_listener(pid) do
-            unquote(store).stop_listener(pid)
+            @__store__.stop_listener(pid)
           end
         end
       end

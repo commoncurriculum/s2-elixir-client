@@ -72,7 +72,8 @@ defmodule S2.StoreIntegrationTest do
       base_delay: 100,
       max_queue_size: 1000,
       recv_timeout: 5_000,
-      compression: :none
+      compression: :none,
+      call_timeout: 5_000
     }
 
     start_supervised!({S2.Store.Supervisor, config})
@@ -586,7 +587,8 @@ defmodule S2.StoreIntegrationTest do
       base_delay: 100,
       max_queue_size: 1000,
       recv_timeout: 5_000,
-      compression: :gzip
+      compression: :gzip,
+      call_timeout: 5_000
     }
 
     # Use a unique registry to avoid conflicts with the main test store
