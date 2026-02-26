@@ -57,7 +57,8 @@ defmodule S2.Store.Supervisor do
       basin: config.basin,
       stream: stream,
       max_retries: config.max_retries,
-      base_delay: config.base_delay
+      base_delay: config.base_delay,
+      recv_timeout: config.recv_timeout
     }
 
     Task.Supervisor.start_child(task_sup_name(store), fn ->
@@ -66,7 +67,7 @@ defmodule S2.Store.Supervisor do
 
       {seq_num, conn} = resolve_start_position(conn, config, stream, opts)
 
-      {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token)
+      {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout)
       S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
     end)
   end

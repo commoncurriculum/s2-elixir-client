@@ -2,62 +2,48 @@ defmodule S2.Store.Telemetry do
   @moduledoc """
   Telemetry events emitted by `S2.Store`.
 
+  All events use `:telemetry.span/3` where possible, following the standard
+  Erlang/Elixir telemetry span convention. This means each operation emits
+  a `:start` event, then either a `:stop` or `:exception` event with timing
+  measurements — compatible with `:telemetry.attach/4` and libraries like
+  `Telemetry.Metrics` out of the box.
+
   All events follow the `[:s2, :store, ...]` prefix convention.
 
   ## Events
 
-  ### `[:s2, :store, :append, :start]`
-  Emitted when an append begins.
-  - Measurements: `%{system_time: integer}`
+  ### `[:s2, :store, :append, :start | :stop | :exception]`
+  Emitted as a span around each append operation.
+  - Start measurements: `%{system_time: integer, monotonic_time: integer}`
+  - Stop measurements: `%{duration: integer, monotonic_time: integer}`
+  - Exception measurements: `%{duration: integer, monotonic_time: integer}`
   - Metadata: `%{stream: String.t()}`
+  - Exception metadata adds: `kind`, `reason`, `stacktrace`
 
-  ### `[:s2, :store, :append, :stop]`
-  Emitted when an append succeeds.
-  - Measurements: `%{duration: integer}` (native time units)
-  - Metadata: `%{stream: String.t()}`
-
-  ### `[:s2, :store, :append, :exception]`
-  Emitted when an append fails.
-  - Measurements: `%{duration: integer}` (native time units)
-  - Metadata: `%{stream: String.t(), reason: term}`
-
-  ### `[:s2, :store, :reconnect, :start]`
-  Emitted when a reconnection attempt begins.
-  - Measurements: `%{system_time: integer}`
+  ### `[:s2, :store, :reconnect, :start | :stop | :exception]`
+  Emitted as a span around each reconnection attempt.
+  - Same measurement pattern as append.
   - Metadata: `%{stream: String.t(), component: :writer | :listener, attempt: integer}`
-
-  ### `[:s2, :store, :reconnect, :stop]`
-  Emitted when a reconnection succeeds.
-  - Measurements: `%{duration: integer}` (native time units)
-  - Metadata: `%{stream: String.t(), component: :writer | :listener, attempt: integer}`
-
-  ### `[:s2, :store, :reconnect, :exception]`
-  Emitted when a reconnection fails.
-  - Measurements: `%{duration: integer}` (native time units)
-  - Metadata: `%{stream: String.t(), component: :writer | :listener, attempt: integer, reason: term}`
 
   ### `[:s2, :store, :listener, :connect]`
-  Emitted when a listener establishes its initial connection.
+  Emitted as a single event when a listener establishes its initial connection.
   - Measurements: `%{system_time: integer}`
   - Metadata: `%{stream: String.t()}`
   """
 
-  @doc false
-  def span(event, metadata, fun) do
-    start_time = System.monotonic_time()
-    :telemetry.execute(event ++ [:start], %{system_time: System.system_time()}, metadata)
+  @doc """
+  Execute a function within a telemetry span.
 
-    try do
-      result = fun.()
-      duration = System.monotonic_time() - start_time
-      :telemetry.execute(event ++ [:stop], %{duration: duration}, metadata)
-      result
-    rescue
-      e ->
-        duration = System.monotonic_time() - start_time
-        :telemetry.execute(event ++ [:exception], %{duration: duration}, Map.put(metadata, :reason, e))
-        reraise e, __STACKTRACE__
-    end
+  Delegates to `:telemetry.span/3`. The `fun` must return `{result, extra_metadata}`
+  where `extra_metadata` is merged into the `:stop` event metadata. If `fun` raises,
+  throws, or exits, the `:exception` event is emitted automatically by `:telemetry.span/3`.
+
+  For operations that return error tuples (not exceptions), the span emits `:stop` —
+  the operation completed, it just had an error result. Include error info in the
+  returned metadata if you want it in the telemetry event.
+  """
+  def span(event_prefix, metadata, fun) do
+    :telemetry.span(event_prefix, metadata, fun)
   end
 
   @doc false

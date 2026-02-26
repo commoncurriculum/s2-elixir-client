@@ -7,6 +7,11 @@ defmodule S2.S2S.Shared do
 
   @default_timeout 5_000
 
+  @doc """
+  Default timeout in milliseconds for S2S operations.
+  """
+  def default_timeout, do: @default_timeout
+
   # Maximum bytes to buffer before rejecting a frame as too large.
   # Protects against OOM from a misbehaving server (16 MiB).
   @max_buffer_size 16 * 1024 * 1024

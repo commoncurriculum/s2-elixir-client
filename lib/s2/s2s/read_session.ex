@@ -18,17 +18,23 @@ defmodule S2.S2S.ReadSession do
 
   alias S2.S2S.Shared
 
-  @recv_timeout 5_000
+  @default_recv_timeout 5_000
 
   @typedoc "An open read session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :owner_pid, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :owner_pid, recv_timeout: @default_recv_timeout, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming read session.
 
+  ## Options
+
   Accepts the same query opts as unary read: `:seq_num`, `:count`, `:wait`, etc.
+
+    * `:token` — Bearer token for authentication.
+    * `:recv_timeout` — Timeout in milliseconds for receiving responses (default: 5000).
+
   Returns `{:ok, session}` on success or `{:error, reason}` on failure.
   On `Mint.HTTP2.request/5` failure, returns `{:error, reason, conn}` so the
   caller can still manage the connection.
@@ -41,6 +47,7 @@ defmodule S2.S2S.ReadSession do
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
 
     token = Keyword.get(opts, :token)
+    recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -49,7 +56,7 @@ defmodule S2.S2S.ReadSession do
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
-        session = %__MODULE__{conn: conn, request_ref: request_ref, owner_pid: self()}
+        session = %__MODULE__{conn: conn, request_ref: request_ref, owner_pid: self(), recv_timeout: recv_timeout}
         wait_for_headers(session)
 
       {:error, conn, reason} ->
@@ -138,7 +145,7 @@ defmodule S2.S2S.ReadSession do
             wait_for_headers(session)
         end
     after
-      @recv_timeout -> {:error, :timeout, session.conn}
+      session.recv_timeout -> {:error, :timeout, session.conn}
     end
   end
 
@@ -193,7 +200,7 @@ defmodule S2.S2S.ReadSession do
             receive_batch(session)
         end
     after
-      @recv_timeout -> {:error, :timeout, close_session(session)}
+      session.recv_timeout -> {:error, :timeout, close_session(session)}
     end
   end
 

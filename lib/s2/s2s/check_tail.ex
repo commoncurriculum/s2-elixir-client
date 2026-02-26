@@ -12,6 +12,18 @@ defmodule S2.S2S.CheckTail do
 
   alias S2.S2S.Shared
 
+  @doc """
+  Check the tail position of a stream.
+
+  Returns the current sequence number and timestamp of the stream's tail —
+  the position where the next appended record would be written.
+
+  ## Options
+
+    * `:token` — Bearer token for authentication.
+
+  Returns `{:ok, %S2.V1.StreamPosition{}, conn}` or `{:error, reason, conn}`.
+  """
   @spec call(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, S2.V1.StreamPosition.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}

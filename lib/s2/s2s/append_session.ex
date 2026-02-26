@@ -18,26 +18,32 @@ defmodule S2.S2S.AppendSession do
 
   alias S2.S2S.Shared
 
-  @recv_timeout 5_000
+  @default_recv_timeout 5_000
 
   @typedoc "An open append session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: @default_recv_timeout, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming append session.
+
+  ## Options
+
+    * `:token` — Bearer token for authentication.
+    * `:recv_timeout` — Timeout in milliseconds for receiving responses (default: 5000).
 
   Returns `{:ok, session}` on success or `{:error, reason}` on failure.
   On `Mint.HTTP2.request/5` failure, returns `{:error, reason, conn}` so the
   caller can still manage the connection.
   """
-  @spec open(Mint.HTTP2.t(), String.t(), String.t()) ::
+  @spec open(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.AppendSession.open basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
     token = Keyword.get(opts, :token)
+    recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -51,7 +57,8 @@ defmodule S2.S2S.AppendSession do
           request_ref: request_ref,
           basin: basin,
           stream: stream,
-          owner_pid: self()
+          owner_pid: self(),
+          recv_timeout: recv_timeout
         }
 
         wait_for_headers(session)
@@ -134,7 +141,7 @@ defmodule S2.S2S.AppendSession do
             wait_for_headers(session)
         end
     after
-      @recv_timeout -> {:error, :timeout, session.conn}
+      session.recv_timeout -> {:error, :timeout, session.conn}
     end
   end
 
@@ -198,7 +205,7 @@ defmodule S2.S2S.AppendSession do
             do_receive_ack(session, acc)
         end
     after
-      @recv_timeout -> {:error, :timeout, close_session(session)}
+      session.recv_timeout -> {:error, :timeout, close_session(session)}
     end
   end
 
@@ -225,7 +232,7 @@ defmodule S2.S2S.AppendSession do
             drain_final_response(session)
         end
     after
-      @recv_timeout -> {:ok, session}
+      session.recv_timeout -> {:ok, session}
     end
   end
 

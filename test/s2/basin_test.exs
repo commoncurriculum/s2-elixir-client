@@ -25,7 +25,7 @@ defmodule S2.BasinTest do
     test "returns error for duplicate basin", %{client: client, basin: basin} do
       {:ok, _} = S2.Basins.create_basin(%S2.CreateBasinRequest{basin: basin}, server: client)
 
-      assert {:error, %S2.ErrorInfo{code: "resource_already_exists"}} =
+      assert {:error, %S2.Error{code: "resource_already_exists"}} =
                S2.Basins.create_basin(%S2.CreateBasinRequest{basin: basin}, server: client)
     end
   end

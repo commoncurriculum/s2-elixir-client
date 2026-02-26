@@ -70,7 +70,8 @@ defmodule S2.StoreIntegrationTest do
       token: nil,
       max_retries: 5,
       base_delay: 100,
-      max_queue_size: 1000
+      max_queue_size: 1000,
+      recv_timeout: 5_000
     }
 
     start_supervised!({S2.Store.Supervisor, config})

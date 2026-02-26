@@ -1,5 +1,11 @@
 defmodule S2.S2S.Framing do
-  @moduledoc false
+  @moduledoc """
+  S2S wire framing: encode/decode length-prefixed frames with flags.
+
+  Compression flags (zstd, gzip) are parsed on decode but encoding always
+  uses `:none`. The S2 server does not currently send compressed frames,
+  but this module is forward-compatible if it does in the future.
+  """
 
   import Bitwise
 

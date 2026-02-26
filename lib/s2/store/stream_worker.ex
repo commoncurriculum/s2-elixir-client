@@ -20,7 +20,7 @@ defmodule S2.Store.StreamWorker do
   @impl true
   def init({config, stream}) do
     {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
-    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token)
+    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout)
 
     {:ok, %{
       config: config,
@@ -55,18 +55,19 @@ defmodule S2.Store.StreamWorker do
         {:reply, {:error, {:serialization_error, reason}}, state}
 
       {:ok, input, writer} ->
-        Telemetry.event([:s2, :store, :append, :start], %{system_time: System.system_time()}, metadata)
-        start_time = System.monotonic_time()
+        result =
+          Telemetry.span([:s2, :store, :append], metadata, fn ->
+            case append_with_reconnect(state, input) do
+              {:ok, _ack, _session} = ok -> {ok, metadata}
+              {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
+            end
+          end)
 
-        case append_with_reconnect(state, input) do
+        case result do
           {:ok, ack, session} ->
-            duration = System.monotonic_time() - start_time
-            Telemetry.event([:s2, :store, :append, :stop], %{duration: duration}, metadata)
             {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
 
           {:error, reason, session} ->
-            duration = System.monotonic_time() - start_time
-            Telemetry.event([:s2, :store, :append, :exception], %{duration: duration}, Map.put(metadata, :reason, reason))
             {:reply, {:error, reason}, %{state | session: session, writer: writer}}
         end
     end
@@ -96,17 +97,20 @@ defmodule S2.Store.StreamWorker do
       {:error, :max_retries_exceeded, state.session}
     else
       metadata = %{stream: state.stream, component: :writer, attempt: attempt}
-      Telemetry.event([:s2, :store, :reconnect, :start], %{system_time: System.system_time()}, metadata)
-      start_time = System.monotonic_time()
 
       # Best-effort close of old session before reconnecting
       S2.S2S.AppendSession.close(state.session)
 
-      case reconnect(state.config, state.stream) do
-        {:ok, session} ->
-          duration = System.monotonic_time() - start_time
-          Telemetry.event([:s2, :store, :reconnect, :stop], %{duration: duration}, metadata)
+      result =
+        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+          case reconnect(state.config, state.stream) do
+            {:ok, session} -> {{:ok, session}, metadata}
+            {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
+          end
+        end)
 
+      case result do
+        {:ok, session} ->
           case S2.S2S.AppendSession.append(session, input) do
             {:ok, _ack, _session} = ok -> ok
             {:error, _reason, _session} ->
@@ -115,8 +119,6 @@ defmodule S2.Store.StreamWorker do
           end
 
         {:error, _reason} ->
-          duration = System.monotonic_time() - start_time
-          Telemetry.event([:s2, :store, :reconnect, :exception], %{duration: duration}, Map.put(metadata, :reason, :connect_failed))
           backoff(state.config.base_delay, attempt)
           reconnect_and_retry(state, input, attempt + 1)
       end
@@ -125,7 +127,7 @@ defmodule S2.Store.StreamWorker do
 
   defp reconnect(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token) do
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout) do
       {:ok, session}
     end
   end
@@ -166,18 +168,20 @@ defmodule S2.Store.StreamWorker do
       {:error, :max_retries_exceeded}
     else
       metadata = %{stream: config.stream, component: :listener, attempt: attempt}
-      Telemetry.event([:s2, :store, :reconnect, :start], %{system_time: System.system_time()}, metadata)
-      start_time = System.monotonic_time()
 
-      case reconnect_reader(config, seq_num) do
+      result =
+        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+          case reconnect_reader(config, seq_num) do
+            {:ok, session} -> {{:ok, session}, metadata}
+            {:error, reason} -> {{:error, reason}, Map.put(metadata, :error, :connect_failed)}
+          end
+        end)
+
+      case result do
         {:ok, session} ->
-          duration = System.monotonic_time() - start_time
-          Telemetry.event([:s2, :store, :reconnect, :stop], %{duration: duration}, metadata)
           {:ok, session}
 
         {:error, _reason} ->
-          duration = System.monotonic_time() - start_time
-          Telemetry.event([:s2, :store, :reconnect, :exception], %{duration: duration}, Map.put(metadata, :reason, :connect_failed))
           backoff(config.base_delay, attempt)
           reconnect_reader_with_backoff(config, seq_num, attempt + 1)
       end
@@ -185,8 +189,10 @@ defmodule S2.Store.StreamWorker do
   end
 
   defp reconnect_reader(config, seq_num) do
+    recv_timeout = Map.get(config, :recv_timeout, 5_000)
+
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num, token: config.token) do
+         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num, token: config.token, recv_timeout: recv_timeout) do
       {:ok, session}
     end
   end

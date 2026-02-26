@@ -85,7 +85,12 @@ defmodule S2.Patterns.Framing do
 
     defp maybe_complete(%{pending: %{received: n, total_records: n} = pending} = assembler) do
       data = IO.iodata_to_binary(pending.chunks)
-      {:ok, data, %{assembler | pending: nil}}
+
+      if byte_size(data) != pending.total_bytes do
+        {:error, {:frame_size_mismatch, expected: pending.total_bytes, got: byte_size(data)}}
+      else
+        {:ok, data, %{assembler | pending: nil}}
+      end
     end
 
     defp maybe_complete(assembler) do

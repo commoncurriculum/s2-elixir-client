@@ -1,15 +1,24 @@
 defmodule S2.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/commoncurriculum/s2-elixir-client"
+
   def project do
     [
       app: :s2,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       consolidate_protocols: Mix.env() != :test,
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      name: "S2",
+      description: "Elixir client for the S2 durable stream API",
+      source_url: @source_url,
+      homepage_url: "https://s2.dev",
+      docs: docs(),
+      package: package()
     ]
   end
 
@@ -23,6 +32,24 @@ defmodule S2.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md"],
+      source_ref: "v#{@version}"
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => @source_url,
+        "S2" => "https://s2.dev"
+      }
+    ]
+  end
+
   defp deps do
     [
       {:req, "~> 0.5"},
@@ -31,6 +58,7 @@ defmodule S2.MixProject do
       {:mint, "~> 1.6"},
       {:telemetry, "~> 1.0"},
       {:ecto, "~> 3.12", only: :test},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:oapi_generator, "~> 0.4.0", only: :dev, runtime: false}
     ]
   end
