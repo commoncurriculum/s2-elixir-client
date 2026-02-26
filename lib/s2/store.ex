@@ -32,7 +32,7 @@ defmodule S2.Store do
 
   ## Options
 
-    * `:max_retries` — Maximum reconnection attempts before giving up (default: 5).
+    * `:max_retries` — Maximum reconnection attempts before giving up (default: `:infinity`).
     * `:base_delay` — Base delay in ms for exponential backoff between retries (default: 500).
     * `:max_queue_size` — Maximum pending appends per stream worker before returning `{:error, :overloaded}` (default: 1000).
   """
@@ -66,7 +66,7 @@ defmodule S2.Store do
           serializer: @serializer,
           base_url: Keyword.get(app_config, :base_url, "http://localhost:4243"),
           token: Keyword.get(app_config, :token),
-          max_retries: Keyword.get(app_config, :max_retries, 5),
+          max_retries: Keyword.get(app_config, :max_retries, :infinity),
           base_delay: Keyword.get(app_config, :base_delay, 500),
           max_queue_size: Keyword.get(app_config, :max_queue_size, 1000)
         }

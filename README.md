@@ -48,7 +48,7 @@ Here's the implementation. `S2.Store` manages connections, serialization, and se
 config :my_app, MyApp.S2,
   base_url: "https://aws.s2.dev",
   token: System.get_env("S2_TOKEN"),
-  max_retries: 5,       # reconnection attempts before giving up (default: 5)
+  max_retries: :infinity, # reconnection attempts before giving up (default: :infinity)
   base_delay: 500,      # base delay in ms for exponential backoff (default: 500)
   max_queue_size: 1000   # pending appends per stream before {:error, :overloaded} (default: 1000)
 ```

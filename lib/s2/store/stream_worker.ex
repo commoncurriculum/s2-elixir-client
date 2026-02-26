@@ -74,7 +74,7 @@ defmodule S2.Store.StreamWorker do
   defp reconnect_and_retry(state, input, attempt) do
     max = state.config.max_retries
 
-    if attempt > max do
+    if max != :infinity and attempt > max do
       {:error, :max_retries_exceeded, state.session}
     else
       metadata = %{stream: state.stream, component: :writer, attempt: attempt}
@@ -141,7 +141,7 @@ defmodule S2.Store.StreamWorker do
   defp reconnect_reader_with_backoff(config, seq_num, attempt) do
     max = config.max_retries
 
-    if attempt > max do
+    if max != :infinity and attempt > max do
       {:error, :max_retries_exceeded}
     else
       metadata = %{stream: config.stream, component: :listener, attempt: attempt}
@@ -178,7 +178,7 @@ defmodule S2.Store.StreamWorker do
   end
 
   defp backoff(base_delay, attempt) do
-    delay = min(base_delay * Integer.pow(2, attempt - 1), 30_000)
+    delay = min(base_delay * Integer.pow(2, attempt - 1), 300_000)
     jitter = :rand.uniform(max(div(delay, 2), 1))
     Process.sleep(delay + jitter)
   end
