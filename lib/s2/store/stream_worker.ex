@@ -5,7 +5,7 @@ defmodule S2.Store.StreamWorker do
   require Logger
 
   alias S2.Patterns.Serialization
-  alias S2.Store.{Connector, Telemetry}
+  alias S2.Store.Connector
 
   def start_link({config, stream}) do
     name = S2.Store.Supervisor.stream_worker_name(config.store, stream)
@@ -110,7 +110,7 @@ defmodule S2.Store.StreamWorker do
   # Shared append execution: serialize -> telemetry span -> append or trigger reconnect
   defp run_append(state, input, writer, metadata) do
     result =
-      Telemetry.span([:s2, :store, :append], metadata, fn ->
+      :telemetry.span([:s2, :store, :append], metadata, fn ->
         case S2.S2S.AppendSession.append(state.session, input) do
           {:ok, _ack, _session} = ok -> {ok, metadata}
           {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
@@ -164,7 +164,7 @@ defmodule S2.Store.StreamWorker do
 
     Task.start(fn ->
       result =
-        Telemetry.span([:s2, :store, :reconnect], metadata, fn ->
+        :telemetry.span([:s2, :store, :reconnect], metadata, fn ->
           case open_session(config, stream) do
             {:ok, session} ->
               case Mint.HTTP2.controlling_process(session.conn, parent) do

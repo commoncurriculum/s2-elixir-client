@@ -64,7 +64,7 @@ defmodule S2.Store.Supervisor do
     }
 
     Task.Supervisor.start_child(task_sup_name(store), fn ->
-      S2.Store.Telemetry.event([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
+      :telemetry.execute([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
 
       with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
            {:ok, seq_num, conn} <- resolve_start_position(conn, config, stream, opts),
@@ -73,31 +73,21 @@ defmodule S2.Store.Supervisor do
       else
         {:error, reason, _conn} ->
           Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
-          S2.Store.Telemetry.event([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
+          :telemetry.execute([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
           {:error, reason}
 
         {:error, reason} ->
           Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
-          S2.Store.Telemetry.event([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
+          :telemetry.execute([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
           {:error, reason}
       end
     end)
   end
 
-  def stop_listener(pid) when is_pid(pid) do
-    if Process.alive?(pid) do
-      ref = Process.monitor(pid)
-      Process.exit(pid, :shutdown)
-
-      receive do
-        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-      after
-        5_000 ->
-          Process.demonitor(ref, [:flush])
-          {:error, :timeout}
-      end
-    else
-      {:error, :not_found}
+  def stop_listener(store, pid) when is_pid(pid) do
+    case Task.Supervisor.terminate_child(task_sup_name(store), pid) do
+      :ok -> :ok
+      {:error, :not_found} -> {:error, :not_found}
     end
   end
 

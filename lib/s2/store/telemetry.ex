@@ -35,24 +35,4 @@ defmodule S2.Store.Telemetry do
   - Measurements: `%{system_time: integer}`
   - Metadata: `%{stream: String.t(), reason: term()}`
   """
-
-  @doc """
-  Execute a function within a telemetry span.
-
-  Delegates to `:telemetry.span/3`. The `fun` must return `{result, extra_metadata}`
-  where `extra_metadata` is merged into the `:stop` event metadata. If `fun` raises,
-  throws, or exits, the `:exception` event is emitted automatically by `:telemetry.span/3`.
-
-  For operations that return error tuples (not exceptions), the span emits `:stop` —
-  the operation completed, it just had an error result. Include error info in the
-  returned metadata if you want it in the telemetry event.
-  """
-  def span(event_prefix, metadata, fun) do
-    :telemetry.span(event_prefix, metadata, fun)
-  end
-
-  @doc false
-  def event(event, measurements \\ %{}, metadata \\ %{}) do
-    :telemetry.execute(event, measurements, metadata)
-  end
 end

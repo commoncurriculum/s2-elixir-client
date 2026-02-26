@@ -115,7 +115,7 @@ defmodule S2.Store do
       end
 
       def stop_listener(pid) do
-        S2.Store.Supervisor.stop_listener(pid)
+        S2.Store.Supervisor.stop_listener(__MODULE__, pid)
       end
 
       # Allow `use MyApp.S2, serializer: ...` in downstream modules
@@ -157,7 +157,7 @@ defmodule S2.Store do
           end
 
           def stop_listener(pid) do
-            @__store__.stop_listener(pid)
+            unquote(store).stop_listener(pid)
           end
         end
       end

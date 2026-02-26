@@ -63,13 +63,9 @@ defmodule S2.Client do
 
     headers = if basin, do: [{"s2-basin", basin}], else: []
 
-    # URL-encode path segments. Generated operations use raw interpolation
-    # (e.g. "/basins/#{basin}"), so we encode here to handle special characters.
-    encoded_url = encode_url_path(url)
-
     req_opts = [
       method: method,
-      url: encoded_url,
+      url: url,
       headers: headers
     ]
 
@@ -177,14 +173,6 @@ defmodule S2.Client do
 
   defp encode_body(values) when is_list(values), do: Enum.map(values, &encode_body/1)
   defp encode_body(body), do: body
-
-  # Encode each path segment individually, preserving "/" separators.
-  defp encode_url_path(url) do
-    url
-    |> String.split("/")
-    |> Enum.map(&URI.encode/1)
-    |> Enum.join("/")
-  end
 
   defp base_headers(%S2.Config{token: nil}), do: []
 
