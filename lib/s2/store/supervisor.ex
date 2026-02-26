@@ -29,11 +29,13 @@ defmodule S2.Store.Supervisor do
   end
 
   def ensure_worker(store, stream) do
-    name = stream_worker_name(store, stream)
+    config = get_config(store)
+    spec = {S2.Store.StreamWorker, {config, stream}}
 
-    case GenServer.whereis(name) do
-      nil -> start_worker(store, stream)
-      pid when is_pid(pid) -> {:ok, pid}
+    case DynamicSupervisor.start_child(dynamic_sup_name(store), spec) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -47,7 +49,6 @@ defmodule S2.Store.Supervisor do
 
   def listen(store, stream, callback, opts) do
     config = get_config(store)
-    seq_num = Keyword.get(opts, :from, 0)
     serializer = Keyword.get(opts, :serializer, config.serializer)
 
     listener_config = %{
@@ -62,7 +63,10 @@ defmodule S2.Store.Supervisor do
     Task.Supervisor.start_child(task_sup_name(store), fn ->
       S2.Store.Telemetry.event([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
-      {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num)
+
+      seq_num = resolve_start_position(conn, config, stream, opts)
+
+      {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token)
       S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
     end)
   end
@@ -76,10 +80,17 @@ defmodule S2.Store.Supervisor do
     end
   end
 
-  defp start_worker(store, stream) do
-    config = get_config(store)
-    spec = {S2.Store.StreamWorker, {config, stream}}
-    DynamicSupervisor.start_child(dynamic_sup_name(store), spec)
+  defp resolve_start_position(conn, config, stream, opts) do
+    case Keyword.get(opts, :from, 0) do
+      :tail ->
+        case S2.S2S.CheckTail.call(conn, config.basin, stream, token: config.token) do
+          {:ok, position, _conn} -> position.seq_num
+          {:error, _reason, _conn} -> 0
+        end
+
+      seq_num when is_integer(seq_num) ->
+        seq_num
+    end
   end
 
   defp dynamic_sup_name(store), do: Module.concat(store, DynamicSupervisor)

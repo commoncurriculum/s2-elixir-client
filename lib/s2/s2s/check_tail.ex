@@ -12,16 +12,17 @@ defmodule S2.S2S.CheckTail do
 
   alias S2.S2S.Shared
 
-  @spec call(Mint.HTTP2.t(), String.t(), String.t()) ::
+  @spec call(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, S2.V1.StreamPosition.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
-  def call(conn, basin, stream) do
+  def call(conn, basin, stream, opts \\ []) do
     Logger.debug("S2S.CheckTail basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records/tail"
+    token = Keyword.get(opts, :token)
 
     headers = [
       {"s2-basin", basin}
-    ]
+    ] ++ S2.S2S.Connection.auth_headers(token)
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->

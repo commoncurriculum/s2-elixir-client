@@ -40,10 +40,12 @@ defmodule S2.S2S.ReadSession do
     query = Shared.build_read_query(opts)
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
 
+    token = Keyword.get(opts, :token)
+
     headers = [
       {"content-type", "s2s/proto"},
       {"s2-basin", basin}
-    ]
+    ] ++ S2.S2S.Connection.auth_headers(token)
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->

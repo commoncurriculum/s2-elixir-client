@@ -11,6 +11,9 @@ defmodule S2.S2S.Connection do
   ## Options
 
     * `:timeout` — Connection timeout in milliseconds (default: 5000).
+    * `:token` — Bearer token for authentication. Stored but not used at the
+      connection level — individual S2S modules add the `authorization` header
+      to each request.
     * `:transport_opts` — Additional options passed to Mint's transport layer
       (e.g. TLS certificate options like `:cacertfile`, `:certfile`, `:verify`).
   """
@@ -25,6 +28,13 @@ defmodule S2.S2S.Connection do
     transport_opts = Keyword.merge([timeout: timeout], extra_transport_opts)
     Mint.HTTP2.connect(scheme, uri.host, port, transport_opts: transport_opts)
   end
+
+  @doc """
+  Build auth headers from a token. Returns an empty list if token is nil.
+  """
+  @spec auth_headers(String.t() | nil) :: [{String.t(), String.t()}]
+  def auth_headers(nil), do: []
+  def auth_headers(token), do: [{"authorization", "Bearer #{token}"}]
 
   @spec close(Mint.HTTP2.t()) :: {:ok, Mint.HTTP2.t()}
   def close(conn) do

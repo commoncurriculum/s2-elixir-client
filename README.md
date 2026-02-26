@@ -39,6 +39,9 @@ end)
 
 # Stop listening when done
 Chat.stop_listener(listener)
+
+# Listen for only new messages (skip history)
+Chat.listen("general", fn msg -> IO.inspect(msg) end, from: :tail)
 ```
 
 Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams. It handles chunking, framing, and deduplication automatically (see [Patterns](#patterns)), so you just work with your own types.

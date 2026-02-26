@@ -20,7 +20,7 @@ defmodule S2.Store.StreamWorker do
   @impl true
   def init({config, stream}) do
     {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
-    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream)
+    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token)
 
     {:ok, %{
       config: config,
@@ -28,6 +28,12 @@ defmodule S2.Store.StreamWorker do
       session: session,
       writer: Serialization.writer()
     }}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    S2.S2S.AppendSession.close(state.session)
+    :ok
   end
 
   @impl true
@@ -42,23 +48,35 @@ defmodule S2.Store.StreamWorker do
   end
 
   defp do_append(message, serializer, state) do
-    {input, writer} = Serialization.prepare(state.writer, message, serializer)
     metadata = %{stream: state.stream}
 
-    Telemetry.event([:s2, :store, :append, :start], %{system_time: System.system_time()}, metadata)
-    start_time = System.monotonic_time()
+    case safe_prepare(state.writer, message, serializer) do
+      {:error, reason} ->
+        {:reply, {:error, {:serialization_error, reason}}, state}
 
-    case append_with_reconnect(state, input) do
-      {:ok, ack, session} ->
-        duration = System.monotonic_time() - start_time
-        Telemetry.event([:s2, :store, :append, :stop], %{duration: duration}, metadata)
-        {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
+      {:ok, input, writer} ->
+        Telemetry.event([:s2, :store, :append, :start], %{system_time: System.system_time()}, metadata)
+        start_time = System.monotonic_time()
 
-      {:error, reason, session} ->
-        duration = System.monotonic_time() - start_time
-        Telemetry.event([:s2, :store, :append, :exception], %{duration: duration}, Map.put(metadata, :reason, reason))
-        {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+        case append_with_reconnect(state, input) do
+          {:ok, ack, session} ->
+            duration = System.monotonic_time() - start_time
+            Telemetry.event([:s2, :store, :append, :stop], %{duration: duration}, metadata)
+            {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
+
+          {:error, reason, session} ->
+            duration = System.monotonic_time() - start_time
+            Telemetry.event([:s2, :store, :append, :exception], %{duration: duration}, Map.put(metadata, :reason, reason))
+            {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+        end
     end
+  end
+
+  defp safe_prepare(writer, message, serializer) do
+    {input, writer} = Serialization.prepare(writer, message, serializer)
+    {:ok, input, writer}
+  rescue
+    e -> {:error, e}
   end
 
   defp append_with_reconnect(state, input) do
@@ -80,6 +98,9 @@ defmodule S2.Store.StreamWorker do
       metadata = %{stream: state.stream, component: :writer, attempt: attempt}
       Telemetry.event([:s2, :store, :reconnect, :start], %{system_time: System.system_time()}, metadata)
       start_time = System.monotonic_time()
+
+      # Best-effort close of old session before reconnecting
+      S2.S2S.AppendSession.close(state.session)
 
       case reconnect(state.config, state.stream) do
         {:ok, session} ->
@@ -104,7 +125,7 @@ defmodule S2.Store.StreamWorker do
 
   defp reconnect(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream) do
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token) do
       {:ok, session}
     end
   end
@@ -165,7 +186,7 @@ defmodule S2.Store.StreamWorker do
 
   defp reconnect_reader(config, seq_num) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num) do
+         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream, seq_num: seq_num, token: config.token) do
       {:ok, session}
     end
   end

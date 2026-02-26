@@ -10,7 +10,7 @@ defmodule S2.S2S.Append do
   @spec call(Mint.HTTP2.t(), String.t(), String.t(), S2.V1.AppendInput.t()) ::
           {:ok, S2.V1.AppendAck.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
-  def call(conn, basin, stream, %S2.V1.AppendInput{} = input) do
+  def call(conn, basin, stream, %S2.V1.AppendInput{} = input, opts \\ []) do
     Logger.debug("S2S.Append basin=#{basin} stream=#{stream} records=#{length(input.records || [])}")
 
     case Shared.encode_framed(input) do
@@ -18,17 +18,18 @@ defmodule S2.S2S.Append do
         {:error, reason, conn}
 
       {:ok, body} ->
-        do_call(conn, basin, stream, body)
+        do_call(conn, basin, stream, body, opts)
     end
   end
 
-  defp do_call(conn, basin, stream, body) do
+  defp do_call(conn, basin, stream, body, opts) do
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
+    token = Keyword.get(opts, :token)
 
     headers = [
       {"content-type", "s2s/proto"},
       {"s2-basin", basin}
-    ]
+    ] ++ S2.S2S.Connection.auth_headers(token)
 
     case Mint.HTTP2.request(conn, "POST", path, headers, body) do
       {:ok, conn, request_ref} ->
