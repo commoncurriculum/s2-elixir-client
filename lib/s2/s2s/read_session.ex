@@ -91,7 +91,7 @@ defmodule S2.S2S.ReadSession do
         receive_batch(session)
 
       {:error, reason} ->
-        {:error, reason, close_session(session)}
+        {:error, reason, Shared.close_session(session)}
     end
   end
 
@@ -146,7 +146,7 @@ defmodule S2.S2S.ReadSession do
 
             case Shared.check_buffer_size(all_data) do
               {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, close_session(session)}
+                {:error, :buffer_overflow, Shared.close_session(session)}
 
               :ok ->
                 done? = Shared.done?(responses, session.request_ref)
@@ -161,32 +161,28 @@ defmodule S2.S2S.ReadSession do
                   # EOF after heartbeats) or a truly truncated frame (server bug).
                   # Both are end_of_stream — no more data will arrive.
                   :incomplete when done? ->
-                    {:error, :end_of_stream, close_session(session)}
+                    {:error, :end_of_stream, Shared.close_session(session)}
 
                   :incomplete ->
                     receive_batch(%{session | data: all_data}, dl)
 
                   {:error, reason} ->
-                    {:error, reason, close_session(session)}
+                    {:error, reason, Shared.close_session(session)}
                 end
             end
 
           {:error, conn, _error, _responses} ->
-            {:error, :stream_error, close_session(session, conn)}
+            {:error, :stream_error, Shared.close_session(session, conn)}
 
           :unknown ->
             receive_batch(session, dl)
         end
     after
-      Shared.remaining(dl) -> {:error, :timeout, close_session(session)}
+      Shared.remaining(dl) -> {:error, :timeout, Shared.close_session(session)}
     end
   end
 
   defp check_owner!(%__MODULE__{owner_pid: pid}) do
     Shared.assert_owner!(pid, "ReadSession")
-  end
-
-  defp close_session(session, conn \\ nil) do
-    %{session | conn: conn || session.conn, closed: true}
   end
 end

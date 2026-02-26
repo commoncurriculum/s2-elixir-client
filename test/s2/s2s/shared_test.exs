@@ -212,6 +212,22 @@ defmodule S2.S2S.SharedTest do
     end
   end
 
+  describe "close_session/2" do
+    test "marks session as closed keeping existing conn" do
+      session = %S2.S2S.AppendSession{conn: :original_conn, closed: false}
+      closed = Shared.close_session(session)
+      assert closed.closed == true
+      assert closed.conn == :original_conn
+    end
+
+    test "replaces conn when provided" do
+      session = %S2.S2S.ReadSession{conn: :old_conn, closed: false}
+      closed = Shared.close_session(session, :new_conn)
+      assert closed.closed == true
+      assert closed.conn == :new_conn
+    end
+  end
+
   describe "done?/2" do
     test "returns true when :done is present for matching ref" do
       ref = make_ref()

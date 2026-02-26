@@ -12,15 +12,7 @@ defmodule S2.Store.Listener do
   def start(task_supervisor, config, stream, callback, opts) do
     serializer = Keyword.get(opts, :serializer, config.serializer)
 
-    listener_config = %{
-      base_url: config.base_url,
-      token: config.token,
-      basin: config.basin,
-      stream: stream,
-      max_retries: config.max_retries,
-      base_delay: config.base_delay,
-      recv_timeout: config.recv_timeout
-    }
+    listener_config = S2.Store.TailLoop.build_config(config, stream)
 
     Task.Supervisor.start_child(task_supervisor, fn ->
       :telemetry.execute(
@@ -38,6 +30,9 @@ defmodule S2.Store.Listener do
                  recv_timeout: config.recv_timeout
                ) do
           {:ok, session}
+        else
+          {:error, reason, conn} -> {:error, reason, conn}
+          {:error, reason} -> {:error, reason}
         end
       end)
       |> case do

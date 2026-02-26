@@ -241,6 +241,15 @@ defmodule S2.S2S.Shared do
   end
 
   @doc """
+  Mark a session struct as closed, optionally replacing the conn.
+  Works with any session struct that has `:conn` and `:closed` fields.
+  """
+  @spec close_session(struct(), term()) :: struct()
+  def close_session(session, conn \\ nil) do
+    %{session | conn: conn || session.conn, closed: true}
+  end
+
+  @doc """
   Assert that the calling process owns the session. Raises ArgumentError if not.
   """
   @spec assert_owner!(pid(), String.t()) :: :ok

@@ -6,6 +6,14 @@ defmodule S2.Store.TailLoop do
   alias S2.Patterns.Serialization
   alias S2.Store.Connector
 
+  @doc "Build a TailLoop config map from a store config and stream name."
+  @spec build_config(map(), String.t()) :: map()
+  def build_config(store_config, stream) do
+    store_config
+    |> Map.take([:base_url, :token, :basin, :max_retries, :base_delay, :recv_timeout])
+    |> Map.put(:stream, stream)
+  end
+
   @doc false
   def run(session, serializer, callback, config \\ nil, reader \\ Serialization.reader()) do
     connector =

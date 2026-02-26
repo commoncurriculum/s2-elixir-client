@@ -92,7 +92,7 @@ defmodule S2.S2S.AppendSession do
 
     case Shared.encode_framed(input, compression: session.compression) do
       {:error, reason} ->
-        {:error, reason, close_session(session)}
+        {:error, reason, Shared.close_session(session)}
 
       {:ok, body} ->
         case Mint.HTTP2.stream_request_body(session.conn, session.request_ref, body) do
@@ -101,7 +101,7 @@ defmodule S2.S2S.AppendSession do
             receive_ack(session)
 
           {:error, conn, reason} ->
-            {:error, reason, close_session(session, conn)}
+            {:error, reason, Shared.close_session(session, conn)}
         end
     end
   end
@@ -121,7 +121,7 @@ defmodule S2.S2S.AppendSession do
         drain_final_response(session)
 
       {:error, conn, reason} ->
-        {:error, reason, close_session(session, conn)}
+        {:error, reason, Shared.close_session(session, conn)}
     end
   end
 
@@ -146,7 +146,7 @@ defmodule S2.S2S.AppendSession do
         {:ok, ack, %{session | data: rest}}
 
       {:error, reason} ->
-        {:error, reason, close_session(session)}
+        {:error, reason, Shared.close_session(session)}
 
       :incomplete ->
         dl = Shared.deadline(session.recv_timeout)
@@ -165,7 +165,7 @@ defmodule S2.S2S.AppendSession do
 
             case Shared.check_buffer_size(all_data) do
               {:error, :buffer_overflow} ->
-                {:error, :buffer_overflow, close_session(%{session | data: all_data})}
+                {:error, :buffer_overflow, Shared.close_session(%{session | data: all_data})}
 
               :ok ->
                 done? = Shared.done?(responses, session.request_ref)
@@ -175,10 +175,10 @@ defmodule S2.S2S.AppendSession do
                     {:ok, ack, %{session | data: rest}}
 
                   {:error, reason} ->
-                    {:error, reason, close_session(session)}
+                    {:error, reason, Shared.close_session(session)}
 
                   :incomplete when done? ->
-                    {:error, :incomplete_frame, close_session(session)}
+                    {:error, :incomplete_frame, Shared.close_session(session)}
 
                   :incomplete ->
                     do_receive_ack(session, all_data, dl)
@@ -186,13 +186,13 @@ defmodule S2.S2S.AppendSession do
             end
 
           {:error, conn, _error, _responses} ->
-            {:error, :stream_error, close_session(session, conn)}
+            {:error, :stream_error, Shared.close_session(session, conn)}
 
           :unknown ->
             do_receive_ack(session, acc, dl)
         end
     after
-      Shared.remaining(dl) -> {:error, :timeout, close_session(session)}
+      Shared.remaining(dl) -> {:error, :timeout, Shared.close_session(session)}
     end
   end
 
@@ -229,9 +229,5 @@ defmodule S2.S2S.AppendSession do
 
   defp check_owner!(%__MODULE__{owner_pid: pid}) do
     Shared.assert_owner!(pid, "AppendSession")
-  end
-
-  defp close_session(session, conn \\ nil) do
-    %{session | conn: conn || session.conn, closed: true}
   end
 end

@@ -7,4 +7,12 @@ defmodule S2.Patterns.Constants do
   def frame_records, do: "_frame_records"
   def dedupe_seq, do: "_dedupe_seq"
   def writer_id, do: "_writer_id"
+
+  @spec find_header([S2.V1.Header.t()], String.t()) :: binary() | nil
+  def find_header(headers, name) do
+    Enum.find_value(headers, fn
+      %{name: ^name, value: value} -> value
+      _ -> nil
+    end)
+  end
 end

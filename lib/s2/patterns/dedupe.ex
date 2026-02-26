@@ -89,15 +89,12 @@ defmodule S2.Patterns.Dedupe do
     defp maybe_evict(filter), do: filter
 
     defp extract_dedupe_info(headers) do
-      writer_header = Enum.find(headers, fn h -> h.name == Constants.writer_id() end)
-      seq_header = Enum.find(headers, fn h -> h.name == Constants.dedupe_seq() end)
-
-      case {writer_header, seq_header} do
-        {%{value: writer_id}, %{value: <<seq::unsigned-big-64>>}} ->
-          {writer_id, seq}
-
-        _ ->
-          nil
+      with writer_id when writer_id != nil <-
+             Constants.find_header(headers, Constants.writer_id()),
+           <<seq::unsigned-big-64>> <- Constants.find_header(headers, Constants.dedupe_seq()) do
+        {writer_id, seq}
+      else
+        _ -> nil
       end
     end
   end

@@ -103,17 +103,14 @@ defmodule S2.Patterns.RecordFraming do
     end
 
     defp extract_frame_headers(headers) do
-      bytes_header = Enum.find(headers, fn h -> h.name == S2.Patterns.Constants.frame_bytes() end)
+      alias S2.Patterns.Constants
 
-      records_header =
-        Enum.find(headers, fn h -> h.name == S2.Patterns.Constants.frame_records() end)
-
-      case {bytes_header, records_header} do
-        {%{value: <<bytes::unsigned-big-64>>}, %{value: <<records::unsigned-big-64>>}} ->
-          {bytes, records}
-
-        _ ->
-          nil
+      with <<bytes::unsigned-big-64>> <- Constants.find_header(headers, Constants.frame_bytes()),
+           <<records::unsigned-big-64>> <-
+             Constants.find_header(headers, Constants.frame_records()) do
+        {bytes, records}
+      else
+        _ -> nil
       end
     end
   end

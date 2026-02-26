@@ -23,4 +23,25 @@ defmodule S2.Patterns.ConstantsTest do
     assert Constants.dedupe_seq() == "_dedupe_seq"
     assert Constants.writer_id() == "_writer_id"
   end
+
+  describe "find_header/2" do
+    test "returns header value when found" do
+      headers = [
+        %S2.V1.Header{name: "_writer_id", value: "abc"},
+        %S2.V1.Header{name: "_dedupe_seq", value: <<5::unsigned-big-64>>}
+      ]
+
+      assert Constants.find_header(headers, "_writer_id") == "abc"
+      assert Constants.find_header(headers, "_dedupe_seq") == <<5::unsigned-big-64>>
+    end
+
+    test "returns nil when header not found" do
+      headers = [%S2.V1.Header{name: "_writer_id", value: "abc"}]
+      assert Constants.find_header(headers, "_missing") == nil
+    end
+
+    test "returns nil for empty headers" do
+      assert Constants.find_header([], "_anything") == nil
+    end
+  end
 end
