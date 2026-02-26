@@ -262,6 +262,94 @@ defmodule S2.StoreIntegrationTest do
     assert Enum.at(messages, 1).text == "after crash"
   end
 
+  test "listen from: :tail skips existing messages" do
+    {:ok, _} = Chat.create_room("tail")
+
+    # Append messages before the listener starts
+    {:ok, _} = Chat.append("chat/tail", Chat.Message.new(user: "alice", text: "old message 1"))
+    {:ok, _} = Chat.append("chat/tail", Chat.Message.new(user: "alice", text: "old message 2"))
+
+    test_pid = self()
+
+    # Start listening from tail — should NOT see old messages
+    {:ok, _} = Chat.listen("chat/tail", fn %Chat.Message{} = msg ->
+      send(test_pid, {:tail_msg, msg})
+    end, from: :tail)
+
+    # Give the listener time to connect and NOT receive old messages
+    refute_receive {:tail_msg, _}, 1_000
+
+    # Append a new message — listener should receive only this one
+    {:ok, _} = Chat.append("chat/tail", Chat.Message.new(user: "bob", text: "new message"))
+    assert_receive {:tail_msg, %Chat.Message{text: "new message"}}, 5_000
+
+    # Confirm no old messages leaked through
+    refute_receive {:tail_msg, _}, 500
+  end
+
+  test "stop_listener stops a running listener" do
+    {:ok, _} = Chat.create_room("stop")
+
+    test_pid = self()
+
+    {:ok, listener_pid} = Chat.listen("chat/stop", fn %Chat.Message{} = msg ->
+      send(test_pid, {:stop_msg, msg})
+    end)
+
+    assert Process.alive?(listener_pid)
+
+    # Append a message — listener receives it
+    {:ok, _} = Chat.append("chat/stop", Chat.Message.new(user: "alice", text: "before stop"))
+    assert_receive {:stop_msg, %Chat.Message{text: "before stop"}}, 5_000
+
+    # Stop the listener
+    :ok = Chat.stop_listener(listener_pid)
+
+    # Give it a moment to die
+    Process.sleep(50)
+    refute Process.alive?(listener_pid)
+  end
+
+  test "serializer error returns error tuple instead of crashing worker" do
+    {:ok, _} = Chat.create_room("bad-serial")
+
+    # Use the store directly with a broken serializer
+    bad_serializer = %{
+      serialize: fn _msg -> raise "boom" end,
+      deserialize: fn _bin -> raise "boom" end
+    }
+
+    # This should return an error, not crash the worker
+    {:ok, _} = S2.Store.Supervisor.ensure_worker(TestS2, "chat/bad-serial")
+    result = S2.Store.StreamWorker.append(TestS2, "chat/bad-serial", "anything", bad_serializer)
+    assert {:error, {:serialization_error, %RuntimeError{message: "boom"}}} = result
+
+    # The worker should still be alive and functional with a good serializer
+    msg = Chat.Message.new(user: "alice", text: "still works")
+    assert {:ok, _ack} = Chat.append("chat/bad-serial", msg)
+  end
+
+  test "concurrent ensure_worker calls don't crash" do
+    {:ok, _} = Chat.create_room("race")
+
+    # Spawn concurrent ensure_worker calls — tests that the race condition
+    # where two processes both try to start a worker is handled gracefully
+    tasks = for _i <- 1..5 do
+      Task.async(fn ->
+        S2.Store.Supervisor.ensure_worker(TestS2, "chat/race")
+      end)
+    end
+
+    results = Task.await_many(tasks, 10_000)
+
+    # All should succeed with {:ok, pid} — no crashes
+    pids = Enum.map(results, fn {:ok, pid} -> pid end)
+    assert length(pids) == 5
+
+    # All should resolve to the same worker pid
+    assert Enum.uniq(pids) |> length() == 1
+  end
+
   test "Message.new validates required fields" do
     assert_raise Ecto.InvalidChangesetError, fn ->
       Chat.Message.new(text: "no user")

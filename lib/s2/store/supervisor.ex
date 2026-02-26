@@ -64,7 +64,7 @@ defmodule S2.Store.Supervisor do
       S2.Store.Telemetry.event([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
       {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
 
-      seq_num = resolve_start_position(conn, config, stream, opts)
+      {seq_num, conn} = resolve_start_position(conn, config, stream, opts)
 
       {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token)
       S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
@@ -84,12 +84,12 @@ defmodule S2.Store.Supervisor do
     case Keyword.get(opts, :from, 0) do
       :tail ->
         case S2.S2S.CheckTail.call(conn, config.basin, stream, token: config.token) do
-          {:ok, position, _conn} -> position.seq_num
-          {:error, _reason, _conn} -> 0
+          {:ok, position, conn} -> {position.seq_num, conn}
+          {:error, _reason, conn} -> {0, conn}
         end
 
       seq_num when is_integer(seq_num) ->
-        seq_num
+        {seq_num, conn}
     end
   end
 
