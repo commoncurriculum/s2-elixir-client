@@ -32,7 +32,6 @@ defmodule S2.Store.Listener do
           {:ok, session}
         else
           {:error, reason, conn} -> {:error, reason, conn}
-          {:error, reason} -> {:error, reason}
         end
       end)
       |> case do

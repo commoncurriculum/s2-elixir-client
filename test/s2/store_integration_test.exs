@@ -448,6 +448,54 @@ defmodule S2.StoreIntegrationTest do
              Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "after"))
   end
 
+  test "backpressure returns {:error, :overloaded} for append_batch when mailbox is full" do
+    {:ok, _} = Chat.create_room("backpressure-batch")
+
+    # Warmup the worker
+    {:ok, _} =
+      Chat.append_batch("chat/backpressure-batch", [
+        Chat.Message.new(user: "alice", text: "warmup")
+      ])
+
+    # Set max_queue_size to 0
+    [{worker_pid, _}] =
+      Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/backpressure-batch")
+
+    :sys.replace_state(worker_pid, fn state ->
+      put_in(state, [:config, :max_queue_size], 0)
+    end)
+
+    # Suspend the worker so calls pile up in its mailbox
+    :sys.suspend(worker_pid)
+
+    tasks =
+      for i <- 1..3 do
+        Task.async(fn ->
+          Chat.append_batch("chat/backpressure-batch", [
+            Chat.Message.new(user: "user#{i}", text: "msg#{i}")
+          ])
+        end)
+      end
+
+    Process.sleep(100)
+    :sys.resume(worker_pid)
+
+    results = Task.await_many(tasks, 30_000)
+
+    assert Enum.any?(results, &match?({:error, :overloaded}, &1)),
+           "Expected at least one {:error, :overloaded} but got: #{inspect(results)}"
+
+    # Restore and verify worker still works
+    :sys.replace_state(worker_pid, fn state ->
+      put_in(state, [:config, :max_queue_size], 1000)
+    end)
+
+    assert {:ok, _ack} =
+             Chat.append_batch("chat/backpressure-batch", [
+               Chat.Message.new(user: "alice", text: "after")
+             ])
+  end
+
   test "telemetry events are emitted on append" do
     {:ok, _} = Chat.create_room("telemetry")
 
