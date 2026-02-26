@@ -109,6 +109,29 @@ defmodule S2.Patterns.DedupeTest do
       assert {:ok, _filter} = Dedupe.Filter.check(filter, record)
     end
 
+    test "evicts oldest writer when max capacity is exceeded" do
+      filter = Dedupe.Filter.new()
+
+      # Add max_writers unique writers (we can't test the exact number without
+      # exposing the constant, but we can verify the mechanism works by adding
+      # enough writers that the oldest gets evicted, then check that a
+      # previously-seen record from the oldest writer is no longer duplicate)
+      # The internal limit is 10_000 — test with a smaller proxy by filling
+      # up and checking eviction behavior
+      writer_ids = for i <- 1..10_001, do: "writer-#{i}"
+
+      filter =
+        Enum.reduce(writer_ids, filter, fn wid, f ->
+          record = make_sequenced(wid, 0, "data")
+          {:ok, f} = Dedupe.Filter.check(f, record)
+          f
+        end)
+
+      # writer-1 should have been evicted, so seq 0 is accepted again (not :duplicate)
+      record = make_sequenced("writer-1", 0, "replay")
+      assert {:ok, _filter} = Dedupe.Filter.check(filter, record)
+    end
+
     test "new writer ID resets tracking (crash recovery)" do
       filter = Dedupe.Filter.new()
       r1 = make_sequenced("writer-v1", 10, "before-crash")

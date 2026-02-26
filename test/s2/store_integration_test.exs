@@ -514,6 +514,32 @@ defmodule S2.StoreIntegrationTest do
     assert msg.ts == ts
   end
 
+  test "append_batch sends multiple messages in one request" do
+    {:ok, _} = Chat.create_room("batch")
+
+    msgs = [
+      Chat.Message.new(user: "alice", text: "batch-1"),
+      Chat.Message.new(user: "bob", text: "batch-2"),
+      Chat.Message.new(user: "carol", text: "batch-3")
+    ]
+
+    {:ok, ack} = Chat.append_batch("chat/batch", msgs)
+    assert ack.start.seq_num == 0
+
+    test_pid = self()
+
+    Chat.listen("chat/batch", fn %Chat.Message{} = msg ->
+      send(test_pid, {:batch_msg, msg})
+    end)
+
+    received = for _ <- 1..3 do
+      assert_receive {:batch_msg, %Chat.Message{} = msg}, 5_000
+      msg
+    end
+
+    assert Enum.map(received, & &1.text) == ["batch-1", "batch-2", "batch-3"]
+  end
+
   test "append and listen with gzip compression" do
     # Start a separate store with gzip compression
     basin = unique_basin_name("store-gzip")

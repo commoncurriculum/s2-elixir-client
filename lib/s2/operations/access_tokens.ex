@@ -13,7 +13,7 @@ defmodule S2.AccessTokens do
   **Content Types**: `application/json`
   """
   @spec issue_access_token(body :: S2.AccessTokenInfo.t(), opts :: keyword) ::
-          {:ok, S2.IssueAccessTokenResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.IssueAccessTokenResponse.t()} | {:error, S2.Error.t()}
   def issue_access_token(body, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -46,7 +46,7 @@ defmodule S2.AccessTokens do
 
   """
   @spec list_access_tokens(opts :: keyword) ::
-          {:ok, S2.ListAccessTokensResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.ListAccessTokensResponse.t()} | {:error, S2.Error.t()}
   def list_access_tokens(opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:limit, :prefix, :start_after])
@@ -70,7 +70,7 @@ defmodule S2.AccessTokens do
   @doc """
   Revoke an access token.
   """
-  @spec revoke_access_token(id :: String.t(), opts :: keyword) :: :ok | {:error, S2.ErrorInfo.t()}
+  @spec revoke_access_token(id :: String.t(), opts :: keyword) :: :ok | {:error, S2.Error.t()}
   def revoke_access_token(id, opts \\ []) do
     client = opts[:client] || @default_client
 

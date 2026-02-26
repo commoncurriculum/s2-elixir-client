@@ -69,6 +69,16 @@ defmodule S2.S2S.ReadTest do
       assert %S2.Error{} = error
     end
 
+    test "count: limits number of records returned", %{basin: basin, stream: stream} do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+
+      assert {:ok, %S2.V1.ReadBatch{} = batch, _conn} =
+               S2.S2S.Read.call(conn, basin, stream, seq_num: 0, count: 1)
+
+      assert length(batch.records) == 1
+      assert hd(batch.records).body == "record-0"
+    end
+
     test "returns error for nonexistent basin" do
       {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
 

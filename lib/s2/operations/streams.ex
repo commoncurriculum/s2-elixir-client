@@ -16,7 +16,7 @@ defmodule S2.Streams do
           stream :: String.t(),
           body :: S2.StreamReconfiguration.t() | nil,
           opts :: keyword
-        ) :: {:ok, S2.StreamInfo.t()} | {:error, S2.ErrorInfo.t()}
+        ) :: {:ok, S2.StreamInfo.t()} | {:error, S2.Error.t()}
   def create_or_reconfigure_stream(stream, body, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -48,7 +48,7 @@ defmodule S2.Streams do
   **Content Types**: `application/json`
   """
   @spec create_stream(body :: S2.CreateStreamRequest.t(), opts :: keyword) ::
-          {:ok, S2.StreamInfo.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.StreamInfo.t()} | {:error, S2.Error.t()}
   def create_stream(body, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -74,7 +74,7 @@ defmodule S2.Streams do
   @doc """
   Delete a stream.
   """
-  @spec delete_stream(stream :: String.t(), opts :: keyword) :: :ok | {:error, S2.ErrorInfo.t()}
+  @spec delete_stream(stream :: String.t(), opts :: keyword) :: :ok | {:error, S2.Error.t()}
   def delete_stream(stream, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -98,7 +98,7 @@ defmodule S2.Streams do
   Get stream configuration.
   """
   @spec get_stream_config(stream :: String.t(), opts :: keyword) ::
-          {:ok, S2.StreamConfig.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.StreamConfig.t()} | {:error, S2.Error.t()}
   def get_stream_config(stream, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -131,7 +131,7 @@ defmodule S2.Streams do
 
   """
   @spec list_streams(opts :: keyword) ::
-          {:ok, S2.ListStreamsResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.ListStreamsResponse.t()} | {:error, S2.Error.t()}
   def list_streams(opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:limit, :prefix, :start_after])
@@ -164,7 +164,7 @@ defmodule S2.Streams do
           stream :: String.t(),
           body :: S2.StreamReconfiguration.t(),
           opts :: keyword
-        ) :: {:ok, S2.StreamConfig.t()} | {:error, S2.ErrorInfo.t()}
+        ) :: {:ok, S2.StreamConfig.t()} | {:error, S2.Error.t()}
   def reconfigure_stream(stream, body, opts \\ []) do
     client = opts[:client] || @default_client
 

@@ -74,7 +74,7 @@ defmodule S2.Patterns.Framing do
       case extract_frame_headers(record.headers) do
         nil ->
           # Continuation chunk — no framing headers expected
-          pending = %{pending | chunks: pending.chunks ++ [record.body], received: pending.received + 1}
+          pending = %{pending | chunks: [record.body | pending.chunks], received: pending.received + 1}
           maybe_complete(%{assembler | pending: pending})
 
         _headers ->
@@ -84,7 +84,7 @@ defmodule S2.Patterns.Framing do
     end
 
     defp maybe_complete(%{pending: %{received: n, total_records: n} = pending} = assembler) do
-      data = IO.iodata_to_binary(pending.chunks)
+      data = pending.chunks |> Enum.reverse() |> IO.iodata_to_binary()
 
       if byte_size(data) != pending.total_bytes do
         {:error, {:frame_size_mismatch, expected: pending.total_bytes, got: byte_size(data)}}

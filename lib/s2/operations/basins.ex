@@ -13,7 +13,7 @@ defmodule S2.Basins do
   **Content Types**: `application/json`
   """
   @spec create_basin(body :: S2.CreateBasinRequest.t(), opts :: keyword) ::
-          {:ok, S2.BasinInfo.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.BasinInfo.t()} | {:error, S2.Error.t()}
   def create_basin(body, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -47,7 +47,7 @@ defmodule S2.Basins do
           basin :: String.t(),
           body :: S2.CreateOrReconfigureBasinRequest.t() | nil,
           opts :: keyword
-        ) :: {:ok, S2.BasinInfo.t()} | {:error, S2.ErrorInfo.t()}
+        ) :: {:ok, S2.BasinInfo.t()} | {:error, S2.Error.t()}
   def create_or_reconfigure_basin(basin, body, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -71,7 +71,7 @@ defmodule S2.Basins do
   @doc """
   Delete a basin.
   """
-  @spec delete_basin(basin :: String.t(), opts :: keyword) :: :ok | {:error, S2.ErrorInfo.t()}
+  @spec delete_basin(basin :: String.t(), opts :: keyword) :: :ok | {:error, S2.Error.t()}
   def delete_basin(basin, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -95,7 +95,7 @@ defmodule S2.Basins do
   Get basin configuration.
   """
   @spec get_basin_config(basin :: String.t(), opts :: keyword) ::
-          {:ok, S2.BasinConfig.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.BasinConfig.t()} | {:error, S2.Error.t()}
   def get_basin_config(basin, opts \\ []) do
     client = opts[:client] || @default_client
 
@@ -127,7 +127,7 @@ defmodule S2.Basins do
 
   """
   @spec list_basins(opts :: keyword) ::
-          {:ok, S2.ListBasinsResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.ListBasinsResponse.t()} | {:error, S2.Error.t()}
   def list_basins(opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:limit, :prefix, :start_after])
@@ -159,7 +159,7 @@ defmodule S2.Basins do
           basin :: String.t(),
           body :: S2.BasinReconfiguration.t(),
           opts :: keyword
-        ) :: {:ok, S2.BasinConfig.t()} | {:error, S2.ErrorInfo.t()}
+        ) :: {:ok, S2.BasinConfig.t()} | {:error, S2.Error.t()}
   def reconfigure_basin(basin, body, opts \\ []) do
     client = opts[:client] || @default_client
 

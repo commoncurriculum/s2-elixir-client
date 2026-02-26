@@ -37,6 +37,14 @@ defmodule S2.Store do
     * `:max_queue_size` — Maximum pending appends per stream worker before returning `{:error, :overloaded}` (default: 1000).
     * `:recv_timeout` — Timeout in milliseconds for individual S2S data plane operations (default: 5000).
     * `:compression` — Compression for S2S frames: `:none`, `:gzip`, or `:zstd` (default: `:none`). Zstd requires the optional `:ezstd` dependency.
+    * `:serializer` — A map with `:serialize` and `:deserialize` functions (default: JSON via Jason).
+
+  ## Listener options
+
+  `listen/3` accepts these additional options:
+
+    * `:from` — Where to start reading: an integer sequence number (default: `0`) or `:tail` to start from the end of the stream.
+    * `:serializer` — Override the store's default serializer for this listener.
   """
 
   @typedoc "A serializer map with `:serialize` and `:deserialize` functions."
@@ -87,6 +95,11 @@ defmodule S2.Store do
         S2.Store.StreamWorker.append(__MODULE__, stream, message, serializer)
       end
 
+      def append_batch(stream, messages, serializer \\ @serializer) when is_list(messages) do
+        S2.Store.Supervisor.ensure_worker(__MODULE__, stream)
+        S2.Store.StreamWorker.append_batch(__MODULE__, stream, messages, serializer)
+      end
+
       def create_stream(stream) do
         S2.Store.Supervisor.create_stream(__MODULE__, stream)
       end
@@ -122,6 +135,10 @@ defmodule S2.Store do
 
           def append(stream, message) do
             @__store__.append(stream, message, __serializer__())
+          end
+
+          def append_batch(stream, messages) do
+            @__store__.append_batch(stream, messages, __serializer__())
           end
 
           def listen(stream, callback, opts \\ []) do

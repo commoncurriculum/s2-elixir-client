@@ -18,12 +18,10 @@ defmodule S2.S2S.AppendSession do
 
   alias S2.S2S.Shared
 
-  @default_recv_timeout 5_000
-
   @typedoc "An open append session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: @default_recv_timeout, compression: :none, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: 5_000, compression: :none, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming append session.
@@ -44,7 +42,7 @@ defmodule S2.S2S.AppendSession do
     Logger.debug("S2S.AppendSession.open basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
     token = Keyword.get(opts, :token)
-    recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
+    recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
     compression = Keyword.get(opts, :compression, :none)
 
     headers = [
@@ -125,6 +123,10 @@ defmodule S2.S2S.AppendSession do
   # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
   # can always recover the connection.
   defp wait_for_headers(session) do
+    wait_for_headers(session, Shared.deadline(session.recv_timeout))
+  end
+
+  defp wait_for_headers(session, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(session.conn, message) do
@@ -133,18 +135,18 @@ defmodule S2.S2S.AppendSession do
 
             case check_session_status(responses, session.request_ref) do
               {:ok, 200} -> {:ok, session}
-              {:ok, status} -> {:error, {:unexpected_status, status}, session.conn}
-              :continue -> wait_for_headers(session)
+              {:ok, status} -> {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, session.conn}
+              :continue -> wait_for_headers(session, dl)
             end
 
           {:error, conn, _error, _responses} ->
             {:error, :stream_error, conn}
 
           :unknown ->
-            wait_for_headers(session)
+            wait_for_headers(session, dl)
         end
     after
-      session.recv_timeout -> {:error, :timeout, session.conn}
+      Shared.remaining(dl) -> {:error, :timeout, session.conn}
     end
   end
 
@@ -166,11 +168,12 @@ defmodule S2.S2S.AppendSession do
         {:error, reason, close_session(session)}
 
       :incomplete ->
-        do_receive_ack(%{session | data: <<>>}, all_data)
+        dl = Shared.deadline(session.recv_timeout)
+        do_receive_ack(%{session | data: <<>>}, all_data, dl)
     end
   end
 
-  defp do_receive_ack(session, acc) do
+  defp do_receive_ack(session, acc, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(session.conn, message) do
@@ -197,7 +200,7 @@ defmodule S2.S2S.AppendSession do
                     {:error, :incomplete_frame, close_session(session)}
 
                   :incomplete ->
-                    do_receive_ack(session, all_data)
+                    do_receive_ack(session, all_data, dl)
                 end
             end
 
@@ -205,10 +208,10 @@ defmodule S2.S2S.AppendSession do
             {:error, :stream_error, close_session(session, conn)}
 
           :unknown ->
-            do_receive_ack(session, acc)
+            do_receive_ack(session, acc, dl)
         end
     after
-      session.recv_timeout -> {:error, :timeout, close_session(session)}
+      Shared.remaining(dl) -> {:error, :timeout, close_session(session)}
     end
   end
 
@@ -216,6 +219,10 @@ defmodule S2.S2S.AppendSession do
   # so the HTTP/2 stream is fully closed. Best-effort: if it times out or errors,
   # we still return the closed session.
   defp drain_final_response(session) do
+    drain_final_response(session, Shared.deadline(session.recv_timeout))
+  end
+
+  defp drain_final_response(session, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(session.conn, message) do
@@ -225,17 +232,17 @@ defmodule S2.S2S.AppendSession do
             if Shared.done?(responses) do
               {:ok, session}
             else
-              drain_final_response(session)
+              drain_final_response(session, dl)
             end
 
           {:error, conn, _error, _responses} ->
             {:ok, %{session | conn: conn}}
 
           :unknown ->
-            drain_final_response(session)
+            drain_final_response(session, dl)
         end
     after
-      session.recv_timeout -> {:ok, session}
+      Shared.remaining(dl) -> {:ok, session}
     end
   end
 

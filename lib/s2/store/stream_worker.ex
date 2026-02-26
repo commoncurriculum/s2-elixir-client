@@ -17,17 +17,28 @@ defmodule S2.Store.StreamWorker do
     GenServer.call(name, {:append, message, serializer})
   end
 
+  def append_batch(store, stream, messages, serializer) do
+    name = S2.Store.Supervisor.stream_worker_name(store, stream)
+    GenServer.call(name, {:append_batch, messages, serializer})
+  end
+
   @impl true
   def init({config, stream}) do
-    {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
-    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression)
+    with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
+      {:ok, %{
+        config: config,
+        stream: stream,
+        session: session,
+        writer: Serialization.writer()
+      }}
+    else
+      {:error, reason, _conn} ->
+        {:stop, {:connect_failed, reason}}
 
-    {:ok, %{
-      config: config,
-      stream: stream,
-      session: session,
-      writer: Serialization.writer()
-    }}
+      {:error, reason} ->
+        {:stop, {:connect_failed, reason}}
+    end
   end
 
   @impl true
@@ -44,6 +55,16 @@ defmodule S2.Store.StreamWorker do
       {:reply, {:error, :overloaded}, state}
     else
       do_append(message, serializer, state)
+    end
+  end
+
+  def handle_call({:append_batch, messages, serializer}, _from, state) do
+    {:message_queue_len, queue_len} = Process.info(self(), :message_queue_len)
+
+    if queue_len > state.config.max_queue_size do
+      {:reply, {:error, :overloaded}, state}
+    else
+      do_append_batch(messages, serializer, state)
     end
   end
 
@@ -71,6 +92,44 @@ defmodule S2.Store.StreamWorker do
             {:reply, {:error, reason}, %{state | session: session, writer: writer}}
         end
     end
+  end
+
+  defp do_append_batch(messages, serializer, state) do
+    case safe_prepare_batch(state.writer, messages, serializer) do
+      {:error, reason} ->
+        {:reply, {:error, {:serialization_error, reason}}, state}
+
+      {:ok, input, writer} ->
+        metadata = %{stream: state.stream, count: length(messages)}
+
+        result =
+          Telemetry.span([:s2, :store, :append], metadata, fn ->
+            case append_with_reconnect(state, input) do
+              {:ok, _ack, _session} = ok -> {ok, metadata}
+              {:error, reason, _session} = err -> {err, Map.put(metadata, :error, reason)}
+            end
+          end)
+
+        case result do
+          {:ok, ack, session} ->
+            {:reply, {:ok, ack}, %{state | session: session, writer: writer}}
+
+          {:error, reason, session} ->
+            {:reply, {:error, reason}, %{state | session: session, writer: writer}}
+        end
+    end
+  end
+
+  defp safe_prepare_batch(writer, messages, serializer) do
+    {all_records, writer} =
+      Enum.flat_map_reduce(messages, writer, fn msg, w ->
+        {input, w} = Serialization.prepare(w, msg, serializer)
+        {input.records, w}
+      end)
+
+    {:ok, %S2.V1.AppendInput{records: all_records}, writer}
+  rescue
+    e -> {:error, e}
   end
 
   defp safe_prepare(writer, message, serializer) do
@@ -129,9 +188,13 @@ defmodule S2.Store.StreamWorker do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
          {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
       {:ok, session}
+    else
+      {:error, reason, _conn} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
     end
   end
 
+  @doc false
   def tail_loop(session, serializer, callback, config \\ nil, reader \\ Serialization.reader()) do
     do_tail_loop(session, serializer, callback, config, reader, 0)
   end
@@ -213,8 +276,10 @@ defmodule S2.Store.StreamWorker do
     last.seq_num + 1
   end
 
+  @max_backoff 30_000
+
   defp backoff(base_delay, attempt) do
-    delay = min(base_delay * Integer.pow(2, attempt - 1), 300_000)
+    delay = min(base_delay * Integer.pow(2, attempt - 1), @max_backoff)
     jitter = :rand.uniform(max(div(delay, 2), 1))
     Process.sleep(delay + jitter)
   end

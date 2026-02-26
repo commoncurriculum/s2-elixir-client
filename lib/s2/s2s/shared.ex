@@ -12,6 +12,22 @@ defmodule S2.S2S.Shared do
   """
   def default_timeout, do: @default_timeout
 
+  @doc """
+  Compute a deadline (monotonic time in ms) from a timeout in ms.
+  """
+  @spec deadline(non_neg_integer()) :: integer()
+  def deadline(timeout_ms) do
+    System.monotonic_time(:millisecond) + timeout_ms
+  end
+
+  @doc """
+  Remaining time until a deadline, minimum 0.
+  """
+  @spec remaining(integer()) :: non_neg_integer()
+  def remaining(deadline) do
+    max(deadline - System.monotonic_time(:millisecond), 0)
+  end
+
   # Maximum bytes to buffer before rejecting a frame as too large.
   # Protects against OOM from a misbehaving server (16 MiB).
   @max_buffer_size 16 * 1024 * 1024
@@ -26,10 +42,11 @@ defmodule S2.S2S.Shared do
           {:ok, map(), conn} | {:error, term(), conn}
   def receive_complete(conn, request_ref, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
-    do_receive_complete(conn, request_ref, %{status: nil, data: <<>>}, timeout)
+    dl = deadline(timeout)
+    do_receive_complete(conn, request_ref, %{status: nil, data: <<>>}, dl)
   end
 
-  defp do_receive_complete(conn, request_ref, acc, timeout) do
+  defp do_receive_complete(conn, request_ref, acc, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(conn, message) do
@@ -39,7 +56,7 @@ defmodule S2.S2S.Shared do
             if acc[:done] do
               {:ok, acc, conn}
             else
-              do_receive_complete(conn, request_ref, acc, timeout)
+              do_receive_complete(conn, request_ref, acc, dl)
             end
 
           {:error, updated_conn, _error, _responses} ->
@@ -47,10 +64,10 @@ defmodule S2.S2S.Shared do
             {:error, :stream_error, updated_conn}
 
           :unknown ->
-            do_receive_complete(conn, request_ref, acc, timeout)
+            do_receive_complete(conn, request_ref, acc, dl)
         end
     after
-      timeout -> {:error, {:timeout, timeout}, conn}
+      remaining(dl) -> {:error, :timeout, conn}
     end
   end
 

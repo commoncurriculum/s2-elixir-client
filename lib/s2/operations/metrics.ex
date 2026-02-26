@@ -17,7 +17,7 @@ defmodule S2.Metrics do
 
   """
   @spec account_metrics(opts :: keyword) ::
-          {:ok, S2.MetricSetResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.MetricSetResponse.t()} | {:error, S2.Error.t()}
   def account_metrics(opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:end, :interval, :set, :start])
@@ -50,7 +50,7 @@ defmodule S2.Metrics do
 
   """
   @spec basin_metrics(basin :: String.t(), opts :: keyword) ::
-          {:ok, S2.MetricSetResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.MetricSetResponse.t()} | {:error, S2.Error.t()}
   def basin_metrics(basin, opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:end, :interval, :set, :start])
@@ -83,7 +83,7 @@ defmodule S2.Metrics do
 
   """
   @spec stream_metrics(basin :: String.t(), stream :: String.t(), opts :: keyword) ::
-          {:ok, S2.MetricSetResponse.t()} | {:error, S2.ErrorInfo.t()}
+          {:ok, S2.MetricSetResponse.t()} | {:error, S2.Error.t()}
   def stream_metrics(basin, stream, opts \\ []) do
     client = opts[:client] || @default_client
     query = Keyword.take(opts, [:end, :interval, :set, :start])

@@ -49,6 +49,8 @@ defmodule S2.S2S.Framing do
   @spec decode(binary()) :: {:ok, frame(), binary()} | :incomplete | {:error, term()}
   def decode(data) when byte_size(data) < 3, do: :incomplete
 
+  def decode(<<0::24-big, _rest::binary>>), do: {:error, :invalid_frame}
+
   def decode(<<length::24-big, rest::binary>>) when byte_size(rest) < length do
     :incomplete
   end

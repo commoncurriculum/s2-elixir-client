@@ -18,12 +18,10 @@ defmodule S2.S2S.ReadSession do
 
   alias S2.S2S.Shared
 
-  @default_recv_timeout 5_000
-
   @typedoc "An open read session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :owner_pid, recv_timeout: @default_recv_timeout, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :owner_pid, recv_timeout: 5_000, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming read session.
@@ -47,7 +45,7 @@ defmodule S2.S2S.ReadSession do
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records" <> query
 
     token = Keyword.get(opts, :token)
-    recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
+    recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -120,6 +118,10 @@ defmodule S2.S2S.ReadSession do
   # Returns {:ok, session} or {:error, reason, conn} on failure so the caller
   # can always recover the connection.
   defp wait_for_headers(session) do
+    wait_for_headers(session, Shared.deadline(session.recv_timeout))
+  end
+
+  defp wait_for_headers(session, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(session.conn, message) do
@@ -132,20 +134,20 @@ defmodule S2.S2S.ReadSession do
                 {:ok, %{session | data: data}}
 
               status != nil ->
-                {:error, {:unexpected_status, status}, session.conn}
+                {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, session.conn}
 
               true ->
-                wait_for_headers(session)
+                wait_for_headers(session, dl)
             end
 
           {:error, conn, _error, _responses} ->
             {:error, :stream_error, conn}
 
           :unknown ->
-            wait_for_headers(session)
+            wait_for_headers(session, dl)
         end
     after
-      session.recv_timeout -> {:error, :timeout, session.conn}
+      Shared.remaining(dl) -> {:error, :timeout, session.conn}
     end
   end
 
@@ -158,6 +160,10 @@ defmodule S2.S2S.ReadSession do
   end
 
   defp receive_batch(session) do
+    receive_batch(session, Shared.deadline(session.recv_timeout))
+  end
+
+  defp receive_batch(session, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(session.conn, message) do
@@ -186,7 +192,7 @@ defmodule S2.S2S.ReadSession do
                     {:error, :end_of_stream, close_session(session)}
 
                   :incomplete ->
-                    receive_batch(%{session | data: all_data})
+                    receive_batch(%{session | data: all_data}, dl)
 
                   {:error, reason} ->
                     {:error, reason, close_session(session)}
@@ -197,10 +203,10 @@ defmodule S2.S2S.ReadSession do
             {:error, :stream_error, close_session(session, conn)}
 
           :unknown ->
-            receive_batch(session)
+            receive_batch(session, dl)
         end
     after
-      session.recv_timeout -> {:error, :timeout, close_session(session)}
+      Shared.remaining(dl) -> {:error, :timeout, close_session(session)}
     end
   end
 

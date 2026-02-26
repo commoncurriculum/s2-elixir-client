@@ -17,7 +17,7 @@ defmodule S2.Store.Supervisor do
       {S2.Store.ControlPlane, config}
     ]
 
-    Supervisor.init(children, strategy: :one_for_all)
+    Supervisor.init(children, strategy: :rest_for_one)
   end
 
   def get_config(store) do
@@ -63,16 +63,20 @@ defmodule S2.Store.Supervisor do
 
     Task.Supervisor.start_child(task_sup_name(store), fn ->
       S2.Store.Telemetry.event([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
-      {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
 
-      case resolve_start_position(conn, config, stream, opts) do
-        {:ok, seq_num, conn} ->
-          {:ok, session} = S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout)
-          S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
-
+      with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
+           {:ok, seq_num, conn} <- resolve_start_position(conn, config, stream, opts),
+           {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout) do
+        S2.Store.StreamWorker.tail_loop(session, serializer, callback, listener_config)
+      else
         {:error, reason, _conn} ->
           require Logger
-          Logger.error("S2 listener failed to resolve start position for #{stream}: #{inspect(reason)}")
+          Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
+          {:error, reason}
+
+        {:error, reason} ->
+          require Logger
+          Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
           {:error, reason}
       end
     end)
@@ -80,8 +84,16 @@ defmodule S2.Store.Supervisor do
 
   def stop_listener(pid) when is_pid(pid) do
     if Process.alive?(pid) do
+      ref = Process.monitor(pid)
       Process.exit(pid, :shutdown)
-      :ok
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        5_000 ->
+          Process.demonitor(ref, [:flush])
+          {:error, :timeout}
+      end
     else
       {:error, :not_found}
     end

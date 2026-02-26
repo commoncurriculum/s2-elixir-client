@@ -40,8 +40,13 @@ defmodule S2.Patterns.Dedupe do
   defmodule Filter do
     @moduledoc false
 
-    @type t :: %__MODULE__{seen: %{binary() => non_neg_integer()}}
-    defstruct seen: %{}
+    # Maximum number of unique writer IDs to track. When exceeded, the oldest
+    # entry (by insertion order) is evicted to prevent unbounded memory growth
+    # in long-lived listeners that see many transient writers.
+    @max_writers 10_000
+
+    @type t :: %__MODULE__{seen: %{binary() => non_neg_integer()}, order: [binary()]}
+    defstruct seen: %{}, order: []
 
     @spec new() :: t()
     def new, do: %__MODULE__{}
@@ -55,7 +60,8 @@ defmodule S2.Patterns.Dedupe do
         {writer_id, seq} ->
           case Map.get(filter.seen, writer_id) do
             nil ->
-              {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq)}}
+              filter = maybe_evict(filter)
+              {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq), order: filter.order ++ [writer_id]}}
 
             last_seq when seq > last_seq ->
               {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq)}}
@@ -65,6 +71,13 @@ defmodule S2.Patterns.Dedupe do
           end
       end
     end
+
+    defp maybe_evict(%{seen: seen, order: order} = filter) when map_size(seen) >= @max_writers do
+      [oldest | rest] = order
+      %{filter | seen: Map.delete(seen, oldest), order: rest}
+    end
+
+    defp maybe_evict(filter), do: filter
 
     defp extract_dedupe_info(headers) do
       writer_header = Enum.find(headers, fn h -> h.name == Constants.writer_id() end)

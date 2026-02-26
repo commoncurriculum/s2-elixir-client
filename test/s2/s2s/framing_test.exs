@@ -68,6 +68,14 @@ defmodule S2.S2S.FramingTest do
       assert :incomplete = Framing.decode(<<>>)
     end
 
+    test "returns error for zero-length frame" do
+      # length=0 is invalid: the frame body must have at least 1 byte (flags).
+      # With enough trailing bytes, this should return {:error, :invalid_frame}
+      # rather than crashing with a MatchError.
+      frame = <<0, 0, 0>>
+      assert {:error, :invalid_frame} = Framing.decode(frame)
+    end
+
     test "returns :incomplete when only length prefix present" do
       assert :incomplete = Framing.decode(<<0, 0, 10>>)
     end
@@ -91,6 +99,12 @@ defmodule S2.S2S.FramingTest do
 
       assert {:ok, %{body: "first"}, rest} = Framing.decode(combined)
       assert {:ok, %{body: "second"}, <<>>} = Framing.decode(rest)
+    end
+
+    test "returns :incomplete for length that exceeds available data" do
+      # length=1 means we need 1 byte after the 3-byte prefix, but there are 0
+      frame = <<1::24-big>>
+      assert :incomplete = Framing.decode(frame)
     end
   end
 

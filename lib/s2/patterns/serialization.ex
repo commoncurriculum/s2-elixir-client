@@ -60,7 +60,7 @@ defmodule S2.Patterns.Serialization do
   """
   @spec decode(reader(), [S2.V1.SequencedRecord.t()], serializer()) :: {[term()], reader()}
   def decode(reader, records, serializer) do
-    {messages, reader} =
+    {reversed_messages, reader} =
       Enum.reduce(records, {[], reader}, fn record, {msgs, reader} ->
         case Dedupe.Filter.check(reader.filter, record) do
           :duplicate ->
@@ -74,20 +74,20 @@ defmodule S2.Patterns.Serialization do
                 reader = %{reader | assembler: assembler}
 
                 case safe_deserialize(serializer, data) do
-                  {:ok, message} -> {msgs ++ [message], reader}
-                  {:error, _} = err -> {msgs ++ [err], reader}
+                  {:ok, message} -> {[message | msgs], reader}
+                  {:error, _} = err -> {[err | msgs], reader}
                 end
 
               {:incomplete, assembler} ->
                 {msgs, %{reader | assembler: assembler}}
 
               {:error, reason} ->
-                {msgs ++ [{:error, {:assembly_error, reason}}], reader}
+                {[{:error, {:assembly_error, reason}} | msgs], reader}
             end
         end
       end)
 
-    {messages, reader}
+    {Enum.reverse(reversed_messages), reader}
   end
 
   defp safe_deserialize(serializer, data) do

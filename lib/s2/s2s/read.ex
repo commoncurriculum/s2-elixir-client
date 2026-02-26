@@ -11,7 +11,7 @@ defmodule S2.S2S.Read do
 
   alias S2.S2S.Shared
 
-  @default_recv_timeout 5_000
+  # Uses Shared.default_timeout() at runtime via Keyword.get default
 
   @doc """
   Read a single batch of records from a stream.
@@ -41,18 +41,19 @@ defmodule S2.S2S.Read do
       {"s2-basin", basin}
     ] ++ S2.S2S.Connection.auth_headers(token)
 
-    recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
+    recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
-        receive_first_batch(conn, request_ref, %{status: nil, data: <<>>}, recv_timeout)
+        dl = Shared.deadline(recv_timeout)
+        receive_first_batch(conn, request_ref, %{status: nil, data: <<>>}, dl)
 
       {:error, conn, reason} ->
         {:error, reason, conn}
     end
   end
 
-  defp receive_first_batch(conn, request_ref, acc, recv_timeout) do
+  defp receive_first_batch(conn, request_ref, acc, dl) do
     receive do
       message ->
         case Mint.HTTP2.stream(conn, message) do
@@ -64,27 +65,27 @@ defmodule S2.S2S.Read do
                 handle_complete_response(acc, conn)
 
               acc[:status] != nil and acc[:status] != 200 ->
-                receive_first_batch(conn, request_ref, acc, recv_timeout)
+                receive_first_batch(conn, request_ref, acc, dl)
 
               acc[:status] == 200 ->
                 case Shared.decode_read_batch(acc.data) do
                   {:ok, batch, _rest} -> {:ok, batch, conn}
-                  :incomplete -> receive_first_batch(conn, request_ref, acc, recv_timeout)
+                  :incomplete -> receive_first_batch(conn, request_ref, acc, dl)
                   {:error, reason} -> {:error, reason, conn}
                 end
 
               true ->
-                receive_first_batch(conn, request_ref, acc, recv_timeout)
+                receive_first_batch(conn, request_ref, acc, dl)
             end
 
           {:error, conn, _error, _responses} ->
             {:error, :stream_error, conn}
 
           :unknown ->
-            receive_first_batch(conn, request_ref, acc, recv_timeout)
+            receive_first_batch(conn, request_ref, acc, dl)
         end
     after
-      recv_timeout -> {:error, :timeout, conn}
+      Shared.remaining(dl) -> {:error, :timeout, conn}
     end
   end
 
