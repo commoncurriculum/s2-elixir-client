@@ -316,23 +316,32 @@ defmodule S2.S2S.ProxyTest do
     test "Connection.open fails when proxy is down", %{proxy_port: proxy_port} do
       proxy = S2.ProxyHelper.proxy!()
 
-      ToxiproxyEx.down!(proxy, fn ->
+      # Don't use ToxiproxyEx.down!/2 here — its after-block re-enables the proxy
+      # via Tesla/Mint in active mode, which can pick up stale {:tcp_closed, socket}
+      # messages left by the failed Connection.open through Docker's port proxy.
+      # Instead, manually disable/enable with a flush in between.
+      ToxiproxyEx.Proxy.disable(proxy)
+
+      try do
         assert {:error, _} = S2.S2S.Connection.open("http://localhost:#{proxy_port}")
-        # In Docker, the port proxy briefly accepts TCP connections before closing them,
-        # leaving stale {:tcp_closed, socket} messages in the mailbox. Drain them so
-        # ToxiproxyEx.down!/2's after-block (Proxy.enable via Tesla/Mint active mode)
-        # doesn't pick up a message for the wrong socket.
-        drain_tcp_messages()
-      end)
+      after
+        flush_stale_tcp_messages()
+        ToxiproxyEx.Proxy.enable(proxy)
+      end
     end
   end
 
-  defp drain_tcp_messages do
+  # In Docker, the port proxy briefly accepts TCP connections before closing them,
+  # leaving stale messages in the process mailbox. A brief sleep lets them arrive,
+  # then we drain them so Tesla/Mint's active-mode receive doesn't pick them up.
+  defp flush_stale_tcp_messages do
+    Process.sleep(50)
+
     receive do
       msg
       when is_tuple(msg) and
              elem(msg, 0) in [:tcp, :tcp_closed, :tcp_error, :ssl, :ssl_closed, :ssl_error] ->
-        drain_tcp_messages()
+        flush_stale_tcp_messages()
     after
       0 -> :ok
     end
