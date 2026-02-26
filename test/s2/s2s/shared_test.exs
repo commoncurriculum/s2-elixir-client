@@ -49,9 +49,10 @@ defmodule S2.S2S.SharedTest do
 
   describe "open_session/3" do
     test "returns error when connection fails" do
-      assert {:error, _reason} = Shared.open_session("http://localhost:1", [timeout: 100], fn _conn ->
-        {:ok, :session}
-      end)
+      assert {:error, _reason} =
+               Shared.open_session("http://localhost:1", [timeout: 100], fn _conn ->
+                 {:ok, :session}
+               end)
     end
   end
 
@@ -289,7 +290,9 @@ defmodule S2.S2S.SharedTest do
       # Protox.encode raises for invalid field types (e.g. string where list expected)
       # encode_framed rescues and returns {:error, {:encode_error, exception}}
       bad_input = %S2.V1.AppendInput{records: "not_a_list"}
-      assert {:error, {:encode_error, %Protocol.UndefinedError{}}} = Shared.encode_framed(bad_input)
+
+      assert {:error, {:encode_error, %Protocol.UndefinedError{}}} =
+               Shared.encode_framed(bad_input)
     end
   end
 

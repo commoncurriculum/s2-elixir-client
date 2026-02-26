@@ -54,7 +54,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
 
@@ -69,7 +73,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
       {:ok, session} = S2.S2S.AppendSession.open(conn, basin, stream, recv_timeout: 10_000)
@@ -85,7 +93,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
       input = %S2.V1.AppendInput{records: [%S2.V1.AppendRecord{body: "sliced-unary"}]}
@@ -99,7 +111,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
 
@@ -112,7 +128,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
 
@@ -128,7 +148,11 @@ defmodule S2.S2S.ProxyTest do
       stream: stream,
       proxy_port: proxy_port
     } do
-      S2.ProxyHelper.add_toxic!(:slicer, :downstream, average_size: 1, size_variation: 0, delay: 1)
+      S2.ProxyHelper.add_toxic!(:slicer, :downstream,
+        average_size: 1,
+        size_variation: 0,
+        delay: 1
+      )
 
       conn = S2.ProxyHelper.open_conn!(proxy_port)
       {:ok, session} = S2.S2S.AppendSession.open(conn, basin, stream, recv_timeout: 10_000)

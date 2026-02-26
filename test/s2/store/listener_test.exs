@@ -51,7 +51,6 @@ defmodule S2.Store.ListenerTest do
       assert {:error, {:invalid_from, -1}, _conn} =
                S2.Store.Listener.resolve_start_position(conn, config, stream, from: -1)
     end
-
   end
 
   describe "resolve_start_position/4 with CheckTail error" do

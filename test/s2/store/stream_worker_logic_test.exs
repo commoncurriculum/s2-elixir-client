@@ -12,13 +12,17 @@ defmodule S2.Store.StreamWorkerLogicTest do
   describe "safe_prepare/3" do
     test "returns {:ok, input, writer} on success" do
       writer = Serialization.writer()
-      assert {:ok, %S2.V1.AppendInput{}, _writer} = StreamWorker.safe_prepare(writer, "hello", @json_serializer)
+
+      assert {:ok, %S2.V1.AppendInput{}, _writer} =
+               StreamWorker.safe_prepare(writer, "hello", @json_serializer)
     end
 
     test "returns {:error, exception} when serializer raises" do
       writer = Serialization.writer()
       bad_serializer = %{serialize: fn _ -> raise "boom" end, deserialize: &Function.identity/1}
-      assert {:error, %RuntimeError{message: "boom"}} = StreamWorker.safe_prepare(writer, "x", bad_serializer)
+
+      assert {:error, %RuntimeError{message: "boom"}} =
+               StreamWorker.safe_prepare(writer, "x", bad_serializer)
     end
   end
 
@@ -26,14 +30,17 @@ defmodule S2.Store.StreamWorkerLogicTest do
     test "returns {:ok, input, writer} combining all records" do
       writer = Serialization.writer()
       messages = ["a", "b", "c"]
+
       assert {:ok, %S2.V1.AppendInput{records: records}, _writer} =
                StreamWorker.safe_prepare_batch(writer, messages, @json_serializer)
+
       assert length(records) == 3
     end
 
     test "returns {:error, exception} when serializer raises" do
       writer = Serialization.writer()
       bad_serializer = %{serialize: fn _ -> raise "boom" end, deserialize: &Function.identity/1}
+
       assert {:error, %RuntimeError{message: "boom"}} =
                StreamWorker.safe_prepare_batch(writer, ["x"], bad_serializer)
     end

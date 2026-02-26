@@ -24,3 +24,4 @@ s2v2-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+.claude/

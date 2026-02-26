@@ -153,10 +153,12 @@ defmodule S2.Patterns.SerializationTest do
       records2 = S2.Patterns.RecordFraming.frame(data2)
 
       # Feed first chunk of msg1, then first chunk of msg2 (unexpected new frame start)
-      seq_records = [
-        to_sequenced_records([hd(records1)], 0),
-        to_sequenced_records([hd(records2)], 1)
-      ] |> List.flatten()
+      seq_records =
+        [
+          to_sequenced_records([hd(records1)], 0),
+          to_sequenced_records([hd(records2)], 1)
+        ]
+        |> List.flatten()
 
       {results, _reader} = Serialization.decode(reader, seq_records, @json_serializer)
       assert Enum.any?(results, &match?({:error, {:assembly_error, :unexpected_record}}, &1))

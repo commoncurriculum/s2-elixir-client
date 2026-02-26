@@ -55,7 +55,9 @@ defmodule S2.ClientLogicTest do
     end
 
     test "returns value as-is when no union variant matches" do
-      result = Client.decode_field("unknown", {:union, [{:const, "active"}, {:const, "inactive"}]})
+      result =
+        Client.decode_field("unknown", {:union, [{:const, "active"}, {:const, "inactive"}]})
+
       assert result == "unknown"
     end
 
@@ -72,12 +74,16 @@ defmodule S2.ClientLogicTest do
 
     test "decodes success schema" do
       body = %{"basin" => "test"}
-      assert {:ok, %S2.BasinInfo{}} = Client.handle_response(200, body, [{200, {S2.BasinInfo, :t}}])
+
+      assert {:ok, %S2.BasinInfo{}} =
+               Client.handle_response(200, body, [{200, {S2.BasinInfo, :t}}])
     end
 
     test "decodes error schema" do
       body = %{"code" => "not_found", "message" => "gone"}
-      assert {:error, %S2.Error{status: 404}} = Client.handle_response(404, body, [{404, {S2.ErrorInfo, :t}}])
+
+      assert {:error, %S2.Error{status: 404}} =
+               Client.handle_response(404, body, [{404, {S2.ErrorInfo, :t}}])
     end
 
     test "returns error for unmapped status" do

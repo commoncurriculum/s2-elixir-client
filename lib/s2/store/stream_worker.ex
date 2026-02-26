@@ -65,36 +65,17 @@ defmodule S2.Store.StreamWorker do
   end
 
   def handle_call({:append, message, serializer}, _from, state) do
-    case check_backpressure(state) do
-      {:error, :overloaded} ->
-        {:reply, {:error, :overloaded}, state}
-
-      :ok ->
-        case safe_prepare(state.writer, message, serializer) do
-          {:error, reason} ->
-            {:reply, {:error, {:serialization_error, reason}}, state}
-
-          {:ok, input, writer} ->
-            run_append(state, input, writer, %{stream: state.stream})
-        end
-    end
+    do_append(state, fn -> safe_prepare(state.writer, message, serializer) end, %{
+      stream: state.stream
+    })
   end
 
   @impl true
   def handle_call({:append_batch, messages, serializer}, _from, state) do
-    case check_backpressure(state) do
-      {:error, :overloaded} ->
-        {:reply, {:error, :overloaded}, state}
-
-      :ok ->
-        case safe_prepare_batch(state.writer, messages, serializer) do
-          {:error, reason} ->
-            {:reply, {:error, {:serialization_error, reason}}, state}
-
-          {:ok, input, writer} ->
-            run_append(state, input, writer, %{stream: state.stream, count: length(messages)})
-        end
-    end
+    do_append(state, fn -> safe_prepare_batch(state.writer, messages, serializer) end, %{
+      stream: state.stream,
+      count: length(messages)
+    })
   end
 
   @impl true
@@ -131,7 +112,23 @@ defmodule S2.Store.StreamWorker do
 
   # --- Private ---
 
-  # Shared append execution: serialize -> telemetry span -> append or trigger reconnect
+  defp do_append(state, prepare_fn, metadata) do
+    case check_backpressure(state) do
+      {:error, :overloaded} ->
+        {:reply, {:error, :overloaded}, state}
+
+      :ok ->
+        case prepare_fn.() do
+          {:error, reason} ->
+            {:reply, {:error, {:serialization_error, reason}}, state}
+
+          {:ok, input, writer} ->
+            run_append(state, input, writer, metadata)
+        end
+    end
+  end
+
+  # Serialize -> telemetry span -> append or trigger reconnect
   defp run_append(state, input, writer, metadata) do
     result =
       :telemetry.span([:s2, :store, :append], metadata, fn ->
