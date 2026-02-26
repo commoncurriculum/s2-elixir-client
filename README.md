@@ -7,7 +7,7 @@ Elixir client for the [S2](https://s2.dev) durable stream API. Protobuf data pla
 ```elixir
 def deps do
   [
-    {:s2, "~> 0.1"}
+    {:s2_client, "~> 1.0"}
   ]
 end
 ```

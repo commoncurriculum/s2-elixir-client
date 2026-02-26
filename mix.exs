@@ -1,12 +1,12 @@
 defmodule S2.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "1.0.0"
   @source_url "https://github.com/commoncurriculum/s2-elixir-client"
 
   def project do
     [
-      app: :s2,
+      app: :s2_client,
       version: @version,
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
