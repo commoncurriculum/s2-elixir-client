@@ -71,7 +71,8 @@ defmodule S2.StoreIntegrationTest do
       max_retries: 5,
       base_delay: 100,
       max_queue_size: 1000,
-      recv_timeout: 5_000
+      recv_timeout: 5_000,
+      compression: :none
     }
 
     start_supervised!({S2.Store.Supervisor, config})
@@ -511,5 +512,47 @@ defmodule S2.StoreIntegrationTest do
     ts = ~U[2025-01-01 00:00:00Z]
     msg = Chat.Message.new(user: "alice", text: "hi", ts: ts)
     assert msg.ts == ts
+  end
+
+  test "append and listen with gzip compression" do
+    # Start a separate store with gzip compression
+    basin = unique_basin_name("store-gzip")
+    client = test_client()
+    {:ok, _} = S2.Basins.create_basin(%S2.CreateBasinRequest{basin: basin}, server: client)
+
+    config = %{
+      store: TestS2,
+      basin: basin,
+      serializer: TestS2.config().serializer,
+      base_url: "http://localhost:4243",
+      token: nil,
+      max_retries: 5,
+      base_delay: 100,
+      max_queue_size: 1000,
+      recv_timeout: 5_000,
+      compression: :gzip
+    }
+
+    # Use a unique registry to avoid conflicts with the main test store
+    gzip_store = Module.concat(TestS2, GzipTest)
+    config = %{config | store: gzip_store}
+    start_supervised!(%{id: :gzip_store, start: {S2.Store.Supervisor, :start_link, [config]}, type: :supervisor})
+
+    on_exit(fn -> cleanup_basin(client, basin) end)
+
+    stream = "chat/gzip-test"
+    S2.Streams.create_stream(%S2.CreateStreamRequest{stream: stream}, server: client, basin: basin)
+
+    # Append with gzip compression
+    S2.Store.Supervisor.ensure_worker(gzip_store, stream)
+    {:ok, _ack} = S2.Store.StreamWorker.append(gzip_store, stream, %{"text" => "compressed!"}, config.serializer)
+
+    # Read back — decompression should happen transparently
+    test_pid = self()
+    {:ok, _listener} = S2.Store.Supervisor.listen(gzip_store, stream, fn msg ->
+      send(test_pid, {:msg, msg})
+    end, [])
+
+    assert_receive {:msg, %{"text" => "compressed!"}}, 5_000
   end
 end

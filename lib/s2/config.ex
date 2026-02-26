@@ -36,7 +36,10 @@ defmodule S2.Config do
   defp validate_base_url!(url) do
     case URI.parse(url) do
       %URI{scheme: nil} -> raise ArgumentError, "base_url must have a scheme (http or https)"
+      %URI{scheme: scheme} when scheme not in ["http", "https"] ->
+        raise ArgumentError, "base_url must have a scheme (http or https), got: #{inspect(scheme)}"
       %URI{host: nil} -> raise ArgumentError, "base_url must have a host"
+      %URI{host: ""} -> raise ArgumentError, "base_url must have a host"
       _ -> :ok
     end
   end

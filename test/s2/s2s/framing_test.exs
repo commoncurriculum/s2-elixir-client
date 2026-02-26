@@ -20,20 +20,31 @@ defmodule S2.S2S.FramingTest do
       assert <<1::24-big, 0x00>> = frame
     end
 
-    test "encodes with zstd compression flag" do
+    test "encodes with zstd compression" do
       frame = Framing.encode("data", compression: :zstd)
-      assert <<5::24-big, 0x20, "data">> = frame
+      # Frame should have zstd flag (0x20) and compressed body (not raw "data")
+      assert <<_length::24-big, 0x20, _compressed::binary>> = frame
+      # Compressed frame should be different from uncompressed
+      uncompressed = Framing.encode("data")
+      assert frame != uncompressed
     end
 
-    test "encodes with gzip compression flag" do
+    test "encodes with gzip compression" do
       frame = Framing.encode("data", compression: :gzip)
-      assert <<5::24-big, 0x40, "data">> = frame
+      # Frame should have gzip flag (0x40) and compressed body
+      assert <<_length::24-big, 0x40, _compressed::binary>> = frame
     end
 
     test "encodes terminal with compression" do
       frame = Framing.encode("err", terminal: true, compression: :zstd)
       # 0x80 (terminal) | 0x20 (zstd) = 0xA0
-      assert <<4::24-big, 0xA0, "err">> = frame
+      assert <<_length::24-big, 0xA0, _compressed::binary>> = frame
+    end
+
+    test "raises on unsupported compression type" do
+      assert_raise ArgumentError, ~r/unsupported compression/, fn ->
+        Framing.encode("data", compression: :deflate)
+      end
     end
   end
 
@@ -61,20 +72,16 @@ defmodule S2.S2S.FramingTest do
       assert :incomplete = Framing.decode(<<0, 0, 10>>)
     end
 
-    test "decodes zstd compression flag" do
-      frame = <<5::24-big, 0x20, "data">>
-      assert {:ok, %{compression: :zstd, terminal: false}, <<>>} = Framing.decode(frame)
-    end
-
-    test "decodes gzip compression flag" do
-      frame = <<5::24-big, 0x40, "data">>
-      assert {:ok, %{compression: :gzip, terminal: false}, <<>>} = Framing.decode(frame)
-    end
-
-    test "decodes unknown compression bits gracefully" do
+    test "decodes unknown compression bits as error" do
       # 0x60 = both compression bits set (undefined)
       frame = <<5::24-big, 0x60, "data">>
-      assert {:ok, %{compression: :unknown}, <<>>} = Framing.decode(frame)
+      assert {:error, :unknown_compression} = Framing.decode(frame)
+    end
+
+    test "returns error for corrupted gzip data" do
+      # Manually construct a frame with gzip flag but non-gzip body
+      frame = <<5::24-big, 0x40, "data">>
+      assert {:error, {:decompression_error, :gzip, _}} = Framing.decode(frame)
     end
 
     test "decodes multiple concatenated frames" do
@@ -106,7 +113,7 @@ defmodule S2.S2S.FramingTest do
       assert {:ok, %{terminal: true, body: ^body}, <<>>} = Framing.decode(frame)
     end
 
-    test "terminal with compression bits" do
+    test "terminal with compression round-trips" do
       body = "error"
       frame = Framing.encode(body, terminal: true, compression: :gzip)
 
@@ -140,6 +147,29 @@ defmodule S2.S2S.FramingTest do
       frame = Framing.encode(body)
       assert {:ok, %{body: ^body}, <<>>} = Framing.decode(frame)
     end
+
+    test "large payload round-trip with gzip" do
+      body = :crypto.strong_rand_bytes(10_000)
+      frame = Framing.encode(body, compression: :gzip)
+      assert {:ok, %{body: ^body, compression: :gzip}, <<>>} = Framing.decode(frame)
+    end
+
+    test "large payload round-trip with zstd" do
+      body = :crypto.strong_rand_bytes(10_000)
+      frame = Framing.encode(body, compression: :zstd)
+      assert {:ok, %{body: ^body, compression: :zstd}, <<>>} = Framing.decode(frame)
+    end
+
+    test "compression actually reduces size for compressible data" do
+      # Highly compressible: repeated pattern
+      body = String.duplicate("hello world! ", 1000)
+      none_frame = Framing.encode(body, compression: :none)
+      gzip_frame = Framing.encode(body, compression: :gzip)
+      zstd_frame = Framing.encode(body, compression: :zstd)
+
+      assert byte_size(gzip_frame) < byte_size(none_frame)
+      assert byte_size(zstd_frame) < byte_size(none_frame)
+    end
   end
 
   describe "protobuf round-trip" do
@@ -158,6 +188,22 @@ defmodule S2.S2S.FramingTest do
       assert {:ok, decoded} = Protox.decode(decoded_bytes, S2.V1.AppendInput)
       assert length(decoded.records) == 1
       assert hd(decoded.records).body == "hello world"
+    end
+
+    test "protobuf round-trip with gzip compression" do
+      input = %S2.V1.AppendInput{
+        records: [
+          %S2.V1.AppendRecord{body: String.duplicate("hello ", 100), headers: []}
+        ]
+      }
+
+      {iodata, _size} = Protox.encode!(input)
+      proto_bytes = IO.iodata_to_binary(iodata)
+      frame = Framing.encode(proto_bytes, compression: :gzip)
+
+      assert {:ok, %{body: decoded_bytes, compression: :gzip}, <<>>} = Framing.decode(frame)
+      assert {:ok, decoded} = Protox.decode(decoded_bytes, S2.V1.AppendInput)
+      assert hd(decoded.records).body == String.duplicate("hello ", 100)
     end
   end
 end

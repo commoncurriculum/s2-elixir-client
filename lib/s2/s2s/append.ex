@@ -13,6 +13,7 @@ defmodule S2.S2S.Append do
   ## Options
 
     * `:token` — Bearer token for authentication.
+    * `:recv_timeout` — Timeout in milliseconds for receiving the response (default: 5000).
 
   Returns `{:ok, ack, conn}` on success or `{:error, reason, conn}` on failure.
   """
@@ -34,6 +35,7 @@ defmodule S2.S2S.Append do
   defp do_call(conn, basin, stream, body, opts) do
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
     token = Keyword.get(opts, :token)
+    recv_timeout = Keyword.get(opts, :recv_timeout, Shared.default_timeout())
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -42,7 +44,7 @@ defmodule S2.S2S.Append do
 
     case Mint.HTTP2.request(conn, "POST", path, headers, body) do
       {:ok, conn, request_ref} ->
-        case Shared.receive_complete(conn, request_ref) do
+        case Shared.receive_complete(conn, request_ref, timeout: recv_timeout) do
           {:ok, %{status: 200, data: data}, conn} ->
             case Shared.decode_frame(data, S2.V1.AppendAck) do
               {:ok, ack, _rest} -> {:ok, ack, conn}

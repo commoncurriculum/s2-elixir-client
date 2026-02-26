@@ -23,7 +23,7 @@ defmodule S2.S2S.AppendSession do
   @typedoc "An open append session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: @default_recv_timeout, closed: false, data: <<>>]
+  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: @default_recv_timeout, compression: :none, closed: false, data: <<>>]
 
   @doc """
   Open a new streaming append session.
@@ -32,6 +32,7 @@ defmodule S2.S2S.AppendSession do
 
     * `:token` — Bearer token for authentication.
     * `:recv_timeout` — Timeout in milliseconds for receiving responses (default: 5000).
+    * `:compression` — Compression for S2S frames: `:none`, `:gzip`, or `:zstd` (default: `:none`).
 
   Returns `{:ok, session}` on success or `{:error, reason}` on failure.
   On `Mint.HTTP2.request/5` failure, returns `{:error, reason, conn}` so the
@@ -44,6 +45,7 @@ defmodule S2.S2S.AppendSession do
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records"
     token = Keyword.get(opts, :token)
     recv_timeout = Keyword.get(opts, :recv_timeout, @default_recv_timeout)
+    compression = Keyword.get(opts, :compression, :none)
 
     headers = [
       {"content-type", "s2s/proto"},
@@ -58,7 +60,8 @@ defmodule S2.S2S.AppendSession do
           basin: basin,
           stream: stream,
           owner_pid: self(),
-          recv_timeout: recv_timeout
+          recv_timeout: recv_timeout,
+          compression: compression
         }
 
         wait_for_headers(session)
@@ -83,7 +86,7 @@ defmodule S2.S2S.AppendSession do
   def append(%__MODULE__{} = session, %S2.V1.AppendInput{} = input) do
     check_owner!(session)
 
-    case Shared.encode_framed(input) do
+    case Shared.encode_framed(input, compression: session.compression) do
       {:error, reason} ->
         {:error, reason, close_session(session)}
 

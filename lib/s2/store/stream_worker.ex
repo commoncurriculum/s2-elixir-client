@@ -20,7 +20,7 @@ defmodule S2.Store.StreamWorker do
   @impl true
   def init({config, stream}) do
     {:ok, conn} = S2.S2S.Connection.open(config.base_url, token: config.token)
-    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout)
+    {:ok, session} = S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression)
 
     {:ok, %{
       config: config,
@@ -127,7 +127,7 @@ defmodule S2.Store.StreamWorker do
 
   defp reconnect(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout) do
+         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream, token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
       {:ok, session}
     end
   end

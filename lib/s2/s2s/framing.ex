@@ -1,10 +1,10 @@
 defmodule S2.S2S.Framing do
   @moduledoc """
-  S2S wire framing: encode/decode length-prefixed frames with flags.
+  S2S wire framing: encode/decode length-prefixed frames with compression.
 
-  Compression flags (zstd, gzip) are parsed on decode but encoding always
-  uses `:none`. The S2 server does not currently send compressed frames,
-  but this module is forward-compatible if it does in the future.
+  Supports `:none`, `:gzip`, and `:zstd` compression. Gzip uses Erlang's
+  built-in `:zlib`. Zstd requires the optional `:ezstd` dependency — if
+  not installed, encoding with `:zstd` raises and decoding returns an error.
   """
 
   import Bitwise
@@ -18,18 +18,35 @@ defmodule S2.S2S.Framing do
 
   @type frame :: %{terminal: boolean(), compression: compression(), body: binary()}
 
+  @doc """
+  Encode a binary body into an S2S frame with optional compression.
+
+  ## Options
+
+    * `:terminal` — Whether this is a terminal frame (default: `false`).
+    * `:compression` — Compression algorithm: `:none`, `:gzip`, or `:zstd` (default: `:none`).
+
+  Raises `ArgumentError` for unsupported compression types.
+  """
   @spec encode(binary(), keyword()) :: binary()
   def encode(body, opts \\ []) do
     terminal = Keyword.get(opts, :terminal, false)
     compression = Keyword.get(opts, :compression, :none)
 
+    compressed_body = compress(body, compression)
     flags = build_flags(terminal, compression)
-    length = byte_size(body) + 1
+    length = byte_size(compressed_body) + 1
 
-    <<length::24-big, flags, body::binary>>
+    <<length::24-big, flags, compressed_body::binary>>
   end
 
-  @spec decode(binary()) :: {:ok, frame(), binary()} | :incomplete
+  @doc """
+  Decode an S2S frame, decompressing the body if needed.
+
+  Returns `{:ok, frame, rest}` or `:incomplete`. The returned frame body
+  is always decompressed.
+  """
+  @spec decode(binary()) :: {:ok, frame(), binary()} | :incomplete | {:error, term()}
   def decode(data) when byte_size(data) < 3, do: :incomplete
 
   def decode(<<length::24-big, rest::binary>>) when byte_size(rest) < length do
@@ -43,7 +60,13 @@ defmodule S2.S2S.Framing do
     terminal = (flags &&& @terminal_bit) != 0
     compression = parse_compression(flags &&& @compression_mask)
 
-    {:ok, %{terminal: terminal, compression: compression, body: body}, rest}
+    case decompress(body, compression) do
+      {:ok, decompressed} ->
+        {:ok, %{terminal: terminal, compression: compression, body: decompressed}, rest}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp build_flags(terminal, compression) do
@@ -60,4 +83,49 @@ defmodule S2.S2S.Framing do
   defp parse_compression(0x20), do: :zstd
   defp parse_compression(0x40), do: :gzip
   defp parse_compression(_bits), do: :unknown
+
+  # Compression
+
+  defp compress(body, :none), do: body
+  defp compress(body, :gzip), do: :zlib.gzip(body)
+
+  defp compress(body, :zstd) do
+    ensure_ezstd!()
+    :ezstd.compress(body)
+  end
+
+  defp compress(_body, other) do
+    raise ArgumentError, "unsupported compression: #{inspect(other)}"
+  end
+
+  # Decompression
+
+  defp decompress(body, :none), do: {:ok, body}
+
+  defp decompress(body, :gzip) do
+    {:ok, :zlib.gunzip(body)}
+  rescue
+    e -> {:error, {:decompression_error, :gzip, e}}
+  end
+
+  defp decompress(body, :zstd) do
+    if Code.ensure_loaded?(:ezstd) do
+      {:ok, :ezstd.decompress(body)}
+    else
+      {:error, {:missing_dependency, :ezstd, "add {:ezstd, \"~> 1.1\"} to your deps for zstd support"}}
+    end
+  rescue
+    e -> {:error, {:decompression_error, :zstd, e}}
+  end
+
+  defp decompress(_body, :unknown) do
+    {:error, :unknown_compression}
+  end
+
+  defp ensure_ezstd! do
+    unless Code.ensure_loaded?(:ezstd) do
+      raise ArgumentError,
+        "zstd compression requires the :ezstd dependency. Add {:ezstd, \"~> 1.1\"} to your mix.exs deps."
+    end
+  end
 end

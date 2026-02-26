@@ -21,6 +21,7 @@ defmodule S2.S2S.CheckTail do
   ## Options
 
     * `:token` — Bearer token for authentication.
+    * `:recv_timeout` — Timeout in milliseconds for receiving the response (default: 5000).
 
   Returns `{:ok, %S2.V1.StreamPosition{}, conn}` or `{:error, reason, conn}`.
   """
@@ -31,6 +32,7 @@ defmodule S2.S2S.CheckTail do
     Logger.debug("S2S.CheckTail basin=#{basin} stream=#{stream}")
     path = "/v1/streams/#{URI.encode_www_form(stream)}/records/tail"
     token = Keyword.get(opts, :token)
+    recv_timeout = Keyword.get(opts, :recv_timeout, S2.S2S.Shared.default_timeout())
 
     headers = [
       {"s2-basin", basin}
@@ -38,7 +40,7 @@ defmodule S2.S2S.CheckTail do
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
-        case Shared.receive_complete(conn, request_ref) do
+        case Shared.receive_complete(conn, request_ref, timeout: recv_timeout) do
           {:ok, %{status: 200, data: data}, conn} ->
             parse_tail_response(data, conn)
 
@@ -75,13 +77,13 @@ defmodule S2.S2S.CheckTail do
         {:ok, position, conn}
 
       {:ok, %{"tail" => tail}} when is_map(tail) ->
-        {:error, {:decode_error, {:invalid_tail_fields, inspect(tail)}}, conn}
+        {:error, %S2.Error{message: "invalid tail fields: #{inspect(tail)}"}, conn}
 
       {:ok, body} ->
-        {:error, {:decode_error, {:missing_tail_key, inspect(body)}}, conn}
+        {:error, %S2.Error{message: "missing tail key in response: #{inspect(body)}"}, conn}
 
       {:error, reason} ->
-        {:error, {:decode_error, reason}, conn}
+        {:error, %S2.Error{message: "failed to decode tail response: #{inspect(reason)}"}, conn}
     end
   end
 end

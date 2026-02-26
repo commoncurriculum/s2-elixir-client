@@ -101,6 +101,24 @@ defmodule S2.S2S.ReadSessionTest do
     end
   end
 
+  describe "process affinity" do
+    test "raises when next_batch is called from a different process", %{basin: basin, stream: stream} do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+      {:ok, session} = S2.S2S.ReadSession.open(conn, basin, stream, seq_num: 0)
+
+      task = Task.async(fn ->
+        try do
+          S2.S2S.ReadSession.next_batch(session)
+        rescue
+          e in ArgumentError -> {:raised, e}
+        end
+      end)
+
+      assert {:raised, %ArgumentError{message: msg}} = Task.await(task)
+      assert msg =~ "must be used from the process that created it"
+    end
+  end
+
   describe "close/1" do
     test "closes the session", %{basin: basin, stream: stream} do
       {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")

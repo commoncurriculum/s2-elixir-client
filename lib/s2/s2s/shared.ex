@@ -147,6 +147,9 @@ defmodule S2.S2S.Shared do
       {:ok, %{terminal: true, body: body}, _rest} ->
         {:error, parse_terminal_error(body)}
 
+      {:error, reason} ->
+        {:error, reason}
+
       :incomplete ->
         :incomplete
     end
@@ -179,6 +182,9 @@ defmodule S2.S2S.Shared do
       {:ok, %{terminal: true, body: body}, _rest} ->
         {:error, parse_terminal_error(body)}
 
+      {:error, reason} ->
+        {:error, reason}
+
       :incomplete ->
         :incomplete
     end
@@ -203,14 +209,18 @@ defmodule S2.S2S.Shared do
 
   @doc """
   Encode a Protox-compatible struct (e.g. `S2.V1.AppendInput`) into an
-  S2S-framed binary.
+  S2S-framed binary with optional compression.
+
+  ## Options
+
+    * `:compression` — `:none`, `:gzip`, or `:zstd` (default: `:none`).
   """
-  @spec encode_framed(struct()) :: {:ok, binary()} | {:error, term()}
-  def encode_framed(proto_struct) do
+  @spec encode_framed(struct(), keyword()) :: {:ok, binary()} | {:error, term()}
+  def encode_framed(proto_struct, opts \\ []) do
     case Protox.encode(proto_struct) do
       {:ok, iodata, _size} ->
         proto_bytes = IO.iodata_to_binary(iodata)
-        {:ok, Framing.encode(proto_bytes)}
+        {:ok, Framing.encode(proto_bytes, opts)}
 
       {:error, reason} ->
         {:error, {:encode_error, reason}}

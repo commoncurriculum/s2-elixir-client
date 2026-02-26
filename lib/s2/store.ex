@@ -36,6 +36,7 @@ defmodule S2.Store do
     * `:base_delay` — Base delay in ms for exponential backoff between retries (default: 500).
     * `:max_queue_size` — Maximum pending appends per stream worker before returning `{:error, :overloaded}` (default: 1000).
     * `:recv_timeout` — Timeout in milliseconds for individual S2S data plane operations (default: 5000).
+    * `:compression` — Compression for S2S frames: `:none`, `:gzip`, or `:zstd` (default: `:none`). Zstd requires the optional `:ezstd` dependency.
   """
 
   @typedoc "A serializer map with `:serialize` and `:deserialize` functions."
@@ -70,7 +71,8 @@ defmodule S2.Store do
           max_retries: Keyword.get(app_config, :max_retries, :infinity),
           base_delay: Keyword.get(app_config, :base_delay, 500),
           max_queue_size: Keyword.get(app_config, :max_queue_size, 1000),
-          recv_timeout: Keyword.get(app_config, :recv_timeout, 5_000)
+          recv_timeout: Keyword.get(app_config, :recv_timeout, 5_000),
+          compression: Keyword.get(app_config, :compression, :none)
         }
 
         S2.Store.Supervisor.start_link(config)

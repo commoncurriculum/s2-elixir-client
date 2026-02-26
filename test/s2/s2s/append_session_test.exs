@@ -91,6 +91,28 @@ defmodule S2.S2S.AppendSessionTest do
     end
   end
 
+  describe "process affinity" do
+    test "raises when append is called from a different process", %{basin: basin, stream: stream} do
+      {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
+      {:ok, session} = S2.S2S.AppendSession.open(conn, basin, stream)
+
+      input = %S2.V1.AppendInput{
+        records: [%S2.V1.AppendRecord{body: "cross-process"}]
+      }
+
+      task = Task.async(fn ->
+        try do
+          S2.S2S.AppendSession.append(session, input)
+        rescue
+          e in ArgumentError -> {:raised, e}
+        end
+      end)
+
+      assert {:raised, %ArgumentError{message: msg}} = Task.await(task)
+      assert msg =~ "must be used from the process that created it"
+    end
+  end
+
   describe "close/1" do
     test "closes the session gracefully", %{basin: basin, stream: stream} do
       {:ok, conn} = S2.S2S.Connection.open("http://localhost:4243")
