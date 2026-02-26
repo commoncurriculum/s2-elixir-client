@@ -61,7 +61,13 @@ defmodule S2.Patterns.Dedupe do
           case Map.get(filter.seen, writer_id) do
             nil ->
               filter = maybe_evict(filter)
-              {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq), order: :queue.in(writer_id, filter.order)}}
+
+              {:ok,
+               %{
+                 filter
+                 | seen: Map.put(filter.seen, writer_id, seq),
+                   order: :queue.in(writer_id, filter.order)
+               }}
 
             last_seq when seq > last_seq ->
               {:ok, %{filter | seen: Map.put(filter.seen, writer_id, seq)}}

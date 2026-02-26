@@ -11,7 +11,6 @@ defmodule S2.S2S.Read do
 
   alias S2.S2S.Shared
 
-
   @doc """
   Read a single batch of records from a stream.
 
@@ -30,7 +29,10 @@ defmodule S2.S2S.Read do
           {:ok, S2.V1.ReadBatch.t(), Mint.HTTP2.t()}
           | {:error, term(), Mint.HTTP2.t()}
   def call(conn, basin, stream, opts \\ []) do
-    Logger.debug("S2S.Read basin=#{basin} stream=#{stream} opts=#{inspect(Keyword.delete(opts, :token))}")
+    Logger.debug(
+      "S2S.Read basin=#{basin} stream=#{stream} opts=#{inspect(Keyword.delete(opts, :token))}"
+    )
+
     query = Shared.build_read_query(opts)
     path = Shared.records_path(stream) <> query
     token = Keyword.get(opts, :token)

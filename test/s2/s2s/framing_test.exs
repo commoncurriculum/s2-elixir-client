@@ -51,7 +51,9 @@ defmodule S2.S2S.FramingTest do
   describe "decode/1" do
     test "decodes a regular message" do
       frame = <<6::24-big, 0x00, "hello">>
-      assert {:ok, %{terminal: false, compression: :none, body: "hello"}, <<>>} = Framing.decode(frame)
+
+      assert {:ok, %{terminal: false, compression: :none, body: "hello"}, <<>>} =
+               Framing.decode(frame)
     end
 
     test "returns rest bytes when extra data present" do

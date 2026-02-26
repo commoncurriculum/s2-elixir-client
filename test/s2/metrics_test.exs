@@ -36,7 +36,10 @@ defmodule S2.MetricsTest do
   describe "stream_metrics/3" do
     test "returns error for nonexistent basin/stream", %{client: client} do
       assert {:error, %S2.Error{}} =
-               S2.Metrics.stream_metrics("nonexistent-basin-12345", "nonexistent-stream", server: client, set: "storage")
+               S2.Metrics.stream_metrics("nonexistent-basin-12345", "nonexistent-stream",
+                 server: client,
+                 set: "storage"
+               )
     end
   end
 end

@@ -241,8 +241,8 @@ defmodule S2.S2S.Shared do
   def assert_owner!(owner_pid, module_name) do
     if owner_pid != self() do
       raise ArgumentError,
-        "#{module_name} must be used from the process that created it " <>
-          "(owner: #{inspect(owner_pid)}, caller: #{inspect(self())})"
+            "#{module_name} must be used from the process that created it " <>
+              "(owner: #{inspect(owner_pid)}, caller: #{inspect(self())})"
     end
 
     :ok
@@ -287,6 +287,8 @@ defmodule S2.S2S.Shared do
   Returns `:ok` or `{:error, :buffer_overflow}`.
   """
   @spec check_buffer_size(binary()) :: :ok | {:error, :buffer_overflow}
-  def check_buffer_size(data) when byte_size(data) > @max_buffer_size, do: {:error, :buffer_overflow}
+  def check_buffer_size(data) when byte_size(data) > @max_buffer_size,
+    do: {:error, :buffer_overflow}
+
   def check_buffer_size(_data), do: :ok
 end

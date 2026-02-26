@@ -74,7 +74,12 @@ defmodule S2.Patterns.Framing do
       case extract_frame_headers(record.headers) do
         nil ->
           # Continuation chunk — no framing headers expected
-          pending = %{pending | chunks: [record.body | pending.chunks], received: pending.received + 1}
+          pending = %{
+            pending
+            | chunks: [record.body | pending.chunks],
+              received: pending.received + 1
+          }
+
           maybe_complete(%{assembler | pending: pending})
 
         _headers ->
@@ -99,7 +104,9 @@ defmodule S2.Patterns.Framing do
 
     defp extract_frame_headers(headers) do
       bytes_header = Enum.find(headers, fn h -> h.name == S2.Patterns.Constants.frame_bytes() end)
-      records_header = Enum.find(headers, fn h -> h.name == S2.Patterns.Constants.frame_records() end)
+
+      records_header =
+        Enum.find(headers, fn h -> h.name == S2.Patterns.Constants.frame_records() end)
 
       case {bytes_header, records_header} do
         {%{value: <<bytes::unsigned-big-64>>}, %{value: <<records::unsigned-big-64>>}} ->

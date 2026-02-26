@@ -30,13 +30,14 @@ defmodule S2.Store.StreamWorker do
 
     case open_session(config, stream) do
       {:ok, session} ->
-        {:ok, %{
-          config: config,
-          stream: stream,
-          session: session,
-          writer: Serialization.writer(),
-          connector: Connector.connected(connector)
-        }}
+        {:ok,
+         %{
+           config: config,
+           stream: stream,
+           session: session,
+           writer: Serialization.writer(),
+           connector: Connector.connected(connector)
+         }}
 
       {:error, reason} ->
         {:stop, {:connect_failed, reason}}
@@ -221,8 +222,12 @@ defmodule S2.Store.StreamWorker do
 
   defp open_session(config, stream) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.AppendSession.open(conn, config.basin, stream,
-           token: config.token, recv_timeout: config.recv_timeout, compression: config.compression) do
+         {:ok, session} <-
+           S2.S2S.AppendSession.open(conn, config.basin, stream,
+             token: config.token,
+             recv_timeout: config.recv_timeout,
+             compression: config.compression
+           ) do
       {:ok, session}
     else
       {:error, reason, _conn} -> {:error, reason}

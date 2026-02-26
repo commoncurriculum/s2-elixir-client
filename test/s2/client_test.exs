@@ -23,7 +23,10 @@ defmodule S2.ClientTest do
       %{client: client, basin: basin}
     end
 
-    test "executes a create basin request via generated operation", %{client: client, basin: basin} do
+    test "executes a create basin request via generated operation", %{
+      client: client,
+      basin: basin
+    } do
       result =
         S2.Basins.create_basin(%S2.CreateBasinRequest{basin: basin}, server: client)
 

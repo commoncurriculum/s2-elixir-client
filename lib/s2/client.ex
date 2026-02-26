@@ -46,17 +46,20 @@ defmodule S2.Client do
   failure, or `:ok` for operations with no response body (e.g. DELETE).
   """
   @spec request(map()) :: {:ok, term()} | {:error, term()} | :ok
-  def request(%{
-        url: url,
-        method: method,
-        response: response_specs,
-        opts: opts
-      } = operation) do
+  def request(
+        %{
+          url: url,
+          method: method,
+          response: response_specs,
+          opts: opts
+        } = operation
+      ) do
     client = opts[:server] || raise ArgumentError, "server is required in opts"
 
     unless is_struct(client, __MODULE__) do
       raise ArgumentError, "server must be an %S2.Client{}, got: #{inspect(client)}"
     end
+
     query = Map.get(operation, :query, [])
     body = Map.get(operation, :body)
     basin = opts[:basin]
@@ -147,10 +150,17 @@ defmodule S2.Client do
 
   defp decode_field(value, {:union, variants}) do
     Enum.find_value(variants, fn
-      :null when is_nil(value) -> {:decoded, nil}
-      {schema_mod, :t} when is_atom(schema_mod) and is_map(value) -> {:decoded, decode_schema(value, schema_mod)}
-      {:const, const_value} when const_value == value -> {:decoded, value}
-      _ -> nil
+      :null when is_nil(value) ->
+        {:decoded, nil}
+
+      {schema_mod, :t} when is_atom(schema_mod) and is_map(value) ->
+        {:decoded, decode_schema(value, schema_mod)}
+
+      {:const, const_value} when const_value == value ->
+        {:decoded, value}
+
+      _ ->
+        nil
     end)
     |> case do
       {:decoded, result} ->

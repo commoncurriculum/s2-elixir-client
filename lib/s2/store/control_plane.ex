@@ -15,10 +15,13 @@ defmodule S2.Store.ControlPlane do
 
   @impl true
   def handle_call({:create_stream, stream}, _from, state) do
-    result = S2.Streams.create_stream(
-      %S2.CreateStreamRequest{stream: stream},
-      server: state.client, basin: state.basin
-    )
+    result =
+      S2.Streams.create_stream(
+        %S2.CreateStreamRequest{stream: stream},
+        server: state.client,
+        basin: state.basin
+      )
+
     {:reply, result, state}
   end
 

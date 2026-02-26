@@ -40,7 +40,10 @@ defmodule S2.S2S.ReadSession do
   @spec open(Mint.HTTP2.t(), String.t(), String.t(), keyword()) ::
           {:ok, t()} | {:error, term()} | {:error, term(), Mint.HTTP2.t()}
   def open(conn, basin, stream, opts \\ []) do
-    Logger.debug("S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(Keyword.delete(opts, :token))}")
+    Logger.debug(
+      "S2S.ReadSession.open basin=#{basin} stream=#{stream} opts=#{inspect(Keyword.delete(opts, :token))}"
+    )
+
     query = Shared.build_read_query(opts)
     path = Shared.records_path(stream) <> query
     token = Keyword.get(opts, :token)
@@ -49,7 +52,13 @@ defmodule S2.S2S.ReadSession do
 
     case Mint.HTTP2.request(conn, "GET", path, headers, nil) do
       {:ok, conn, request_ref} ->
-        session = %__MODULE__{conn: conn, request_ref: request_ref, owner_pid: self(), recv_timeout: recv_timeout}
+        session = %__MODULE__{
+          conn: conn,
+          request_ref: request_ref,
+          owner_pid: self(),
+          recv_timeout: recv_timeout
+        }
+
         wait_for_headers(session)
 
       {:error, conn, reason} ->
@@ -129,7 +138,8 @@ defmodule S2.S2S.ReadSession do
                 {:ok, %{session | data: data}}
 
               status != nil ->
-                {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, session.conn}
+                {:error, %S2.Error{status: status, message: "unexpected status #{status}"},
+                 session.conn}
 
               true ->
                 wait_for_headers(session, dl)

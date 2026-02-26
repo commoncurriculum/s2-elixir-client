@@ -116,7 +116,8 @@ defmodule S2.S2S.Framing do
     if @ezstd_available do
       {:ok, :ezstd.decompress(body)}
     else
-      {:error, {:missing_dependency, :ezstd, "add {:ezstd, \"~> 1.1\"} to your deps for zstd support"}}
+      {:error,
+       {:missing_dependency, :ezstd, "add {:ezstd, \"~> 1.1\"} to your deps for zstd support"}}
     end
   rescue
     e -> {:error, {:decompression_error, :zstd, e}}
@@ -129,7 +130,7 @@ defmodule S2.S2S.Framing do
   defp ensure_ezstd! do
     unless @ezstd_available do
       raise ArgumentError,
-        "zstd compression requires the :ezstd dependency. Add {:ezstd, \"~> 1.1\"} to your mix.exs deps."
+            "zstd compression requires the :ezstd dependency. Add {:ezstd, \"~> 1.1\"} to your mix.exs deps."
     end
   end
 end

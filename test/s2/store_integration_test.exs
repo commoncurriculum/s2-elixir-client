@@ -19,9 +19,9 @@ defmodule S2.StoreIntegrationTest do
     @derive Jason.Encoder
     @primary_key false
     embedded_schema do
-      field :user, :string
-      field :text, :string
-      field :ts, :utc_datetime
+      field(:user, :string)
+      field(:text, :string)
+      field(:ts, :utc_datetime)
     end
 
     def new(attrs) do
@@ -104,10 +104,11 @@ defmodule S2.StoreIntegrationTest do
       send(test_pid, {:msg, msg})
     end)
 
-    messages = for _ <- 1..3 do
-      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
-      msg
-    end
+    messages =
+      for _ <- 1..3 do
+        assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+        msg
+      end
 
     assert length(messages) == 3
     assert Enum.at(messages, 0).user == "alice"
@@ -167,10 +168,11 @@ defmodule S2.StoreIntegrationTest do
       send(test_pid, {:msg, msg})
     end)
 
-    messages = for _ <- 1..2 do
-      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
-      msg
-    end
+    messages =
+      for _ <- 1..2 do
+        assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+        msg
+      end
 
     assert Enum.at(messages, 0).text == "before disconnect"
     assert Enum.at(messages, 1).text == "after disconnect"
@@ -181,20 +183,26 @@ defmodule S2.StoreIntegrationTest do
 
     test_pid = self()
 
-    {:ok, listener_pid} = Chat.listen("chat/listen-reconnect", fn %Chat.Message{} = msg ->
-      send(test_pid, {:msg, msg})
-    end)
+    {:ok, listener_pid} =
+      Chat.listen("chat/listen-reconnect", fn %Chat.Message{} = msg ->
+        send(test_pid, {:msg, msg})
+      end)
 
     # Append a message — listener should receive it
-    {:ok, _} = Chat.append("chat/listen-reconnect", Chat.Message.new(user: "alice", text: "first"))
+    {:ok, _} =
+      Chat.append("chat/listen-reconnect", Chat.Message.new(user: "alice", text: "first"))
+
     assert_receive {:msg, %Chat.Message{text: "first"}}, 5_000
 
     # Find and kill the listener's TCP socket to simulate a connection drop
     {:links, links} = Process.info(listener_pid, :links)
-    tcp_port = Enum.find(links, fn
-      port when is_port(port) -> Port.info(port, :name) == {:name, ~c"tcp_inet"}
-      _ -> false
-    end)
+
+    tcp_port =
+      Enum.find(links, fn
+        port when is_port(port) -> Port.info(port, :name) == {:name, ~c"tcp_inet"}
+        _ -> false
+      end)
+
     :gen_tcp.close(tcp_port)
 
     # Append another message — the listener should reconnect and receive it
@@ -228,10 +236,11 @@ defmodule S2.StoreIntegrationTest do
       send(test_pid, {:msg, msg})
     end)
 
-    messages = for _ <- 1..3 do
-      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
-      msg
-    end
+    messages =
+      for _ <- 1..3 do
+        assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+        msg
+      end
 
     assert Enum.map(messages, & &1.text) == ["one", "two", "three"]
     refute_receive {:msg, _}, 500
@@ -264,10 +273,11 @@ defmodule S2.StoreIntegrationTest do
       send(test_pid, {:msg, msg})
     end)
 
-    messages = for _ <- 1..2 do
-      assert_receive {:msg, %Chat.Message{} = msg}, 5_000
-      msg
-    end
+    messages =
+      for _ <- 1..2 do
+        assert_receive {:msg, %Chat.Message{} = msg}, 5_000
+        msg
+      end
 
     assert Enum.at(messages, 0).text == "before crash"
     assert Enum.at(messages, 1).text == "after crash"
@@ -283,9 +293,14 @@ defmodule S2.StoreIntegrationTest do
     test_pid = self()
 
     # Start listening from tail — should NOT see old messages
-    {:ok, _} = Chat.listen("chat/tail", fn %Chat.Message{} = msg ->
-      send(test_pid, {:tail_msg, msg})
-    end, from: :tail)
+    {:ok, _} =
+      Chat.listen(
+        "chat/tail",
+        fn %Chat.Message{} = msg ->
+          send(test_pid, {:tail_msg, msg})
+        end,
+        from: :tail
+      )
 
     # Give the listener time to connect and NOT receive old messages
     refute_receive {:tail_msg, _}, 1_000
@@ -303,14 +318,20 @@ defmodule S2.StoreIntegrationTest do
 
     test_pid = self()
 
-    log = capture_log(fn ->
-      {:ok, listener_pid} = Chat.listen("chat/nonexistent-tail-stream", fn _msg ->
-        send(test_pid, :should_not_happen)
-      end, from: :tail)
+    log =
+      capture_log(fn ->
+        {:ok, listener_pid} =
+          Chat.listen(
+            "chat/nonexistent-tail-stream",
+            fn _msg ->
+              send(test_pid, :should_not_happen)
+            end,
+            from: :tail
+          )
 
-      ref = Process.monitor(listener_pid)
-      assert_receive {:DOWN, ^ref, :process, ^listener_pid, _reason}, 5_000
-    end)
+        ref = Process.monitor(listener_pid)
+        assert_receive {:DOWN, ^ref, :process, ^listener_pid, _reason}, 5_000
+      end)
 
     assert log =~ "listener failed to start"
     refute_received :should_not_happen
@@ -321,9 +342,10 @@ defmodule S2.StoreIntegrationTest do
 
     test_pid = self()
 
-    {:ok, listener_pid} = Chat.listen("chat/stop", fn %Chat.Message{} = msg ->
-      send(test_pid, {:stop_msg, msg})
-    end)
+    {:ok, listener_pid} =
+      Chat.listen("chat/stop", fn %Chat.Message{} = msg ->
+        send(test_pid, {:stop_msg, msg})
+      end)
 
     assert Process.alive?(listener_pid)
 
@@ -363,11 +385,12 @@ defmodule S2.StoreIntegrationTest do
 
     # Spawn concurrent ensure_worker calls — tests that the race condition
     # where two processes both try to start a worker is handled gracefully
-    tasks = for _i <- 1..5 do
-      Task.async(fn ->
-        S2.Store.Supervisor.ensure_worker(TestS2, "chat/race")
-      end)
-    end
+    tasks =
+      for _i <- 1..5 do
+        Task.async(fn ->
+          S2.Store.Supervisor.ensure_worker(TestS2, "chat/race")
+        end)
+      end
 
     results = Task.await_many(tasks, 10_000)
 
@@ -386,7 +409,9 @@ defmodule S2.StoreIntegrationTest do
     {:ok, _} = Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "warmup"))
 
     # Set max_queue_size to 0 so every call is rejected when anything else is queued
-    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/backpressure")
+    [{worker_pid, _}] =
+      Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/backpressure")
+
     :sys.replace_state(worker_pid, fn state ->
       put_in(state, [:config, :max_queue_size], 0)
     end)
@@ -395,11 +420,12 @@ defmodule S2.StoreIntegrationTest do
     :sys.suspend(worker_pid)
 
     # Fire off several async appends — they will queue in the mailbox
-    tasks = for i <- 1..3 do
-      Task.async(fn ->
-        Chat.append("chat/backpressure", Chat.Message.new(user: "user#{i}", text: "msg#{i}"))
-      end)
-    end
+    tasks =
+      for i <- 1..3 do
+        Task.async(fn ->
+          Chat.append("chat/backpressure", Chat.Message.new(user: "user#{i}", text: "msg#{i}"))
+        end)
+      end
 
     # Give messages time to land in the mailbox
     Process.sleep(100)
@@ -411,14 +437,15 @@ defmodule S2.StoreIntegrationTest do
 
     # At least one should be overloaded
     assert Enum.any?(results, &match?({:error, :overloaded}, &1)),
-      "Expected at least one {:error, :overloaded} but got: #{inspect(results)}"
+           "Expected at least one {:error, :overloaded} but got: #{inspect(results)}"
 
     # Restore max_queue_size and verify the worker still works
     :sys.replace_state(worker_pid, fn state ->
       put_in(state, [:config, :max_queue_size], 1000)
     end)
 
-    assert {:ok, _ack} = Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "after"))
+    assert {:ok, _ack} =
+             Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "after"))
   end
 
   test "telemetry events are emitted on append" do
@@ -427,13 +454,23 @@ defmodule S2.StoreIntegrationTest do
     test_pid = self()
 
     # Attach telemetry handlers
-    :telemetry.attach("test-append-start", [:s2, :store, :append, :start], fn event, measurements, metadata, _ ->
-      send(test_pid, {:telemetry, event, measurements, metadata})
-    end, nil)
+    :telemetry.attach(
+      "test-append-start",
+      [:s2, :store, :append, :start],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
-    :telemetry.attach("test-append-stop", [:s2, :store, :append, :stop], fn event, measurements, metadata, _ ->
-      send(test_pid, {:telemetry, event, measurements, metadata})
-    end, nil)
+    :telemetry.attach(
+      "test-append-stop",
+      [:s2, :store, :append, :stop],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
     on_exit(fn ->
       :telemetry.detach("test-append-start")
@@ -442,8 +479,14 @@ defmodule S2.StoreIntegrationTest do
 
     {:ok, _} = Chat.append("chat/telemetry", Chat.Message.new(user: "alice", text: "hi"))
 
-    assert_receive {:telemetry, [:s2, :store, :append, :start], %{system_time: _}, %{stream: "chat/telemetry"}}, 1_000
-    assert_receive {:telemetry, [:s2, :store, :append, :stop], %{duration: duration}, %{stream: "chat/telemetry"}}, 1_000
+    assert_receive {:telemetry, [:s2, :store, :append, :start], %{system_time: _},
+                    %{stream: "chat/telemetry"}},
+                   1_000
+
+    assert_receive {:telemetry, [:s2, :store, :append, :stop], %{duration: duration},
+                    %{stream: "chat/telemetry"}},
+                   1_000
+
     assert is_integer(duration) and duration > 0
   end
 
@@ -452,13 +495,23 @@ defmodule S2.StoreIntegrationTest do
 
     test_pid = self()
 
-    :telemetry.attach("test-reconnect-start", [:s2, :store, :reconnect, :start], fn event, measurements, metadata, _ ->
-      send(test_pid, {:telemetry, event, measurements, metadata})
-    end, nil)
+    :telemetry.attach(
+      "test-reconnect-start",
+      [:s2, :store, :reconnect, :start],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
-    :telemetry.attach("test-reconnect-stop", [:s2, :store, :reconnect, :stop], fn event, measurements, metadata, _ ->
-      send(test_pid, {:telemetry, event, measurements, metadata})
-    end, nil)
+    :telemetry.attach(
+      "test-reconnect-stop",
+      [:s2, :store, :reconnect, :stop],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
     on_exit(fn ->
       :telemetry.detach("test-reconnect-start")
@@ -466,8 +519,12 @@ defmodule S2.StoreIntegrationTest do
     end)
 
     # Start worker, then kill its connection
-    {:ok, _} = Chat.append("chat/telemetry-reconnect", Chat.Message.new(user: "alice", text: "before"))
-    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/telemetry-reconnect")
+    {:ok, _} =
+      Chat.append("chat/telemetry-reconnect", Chat.Message.new(user: "alice", text: "before"))
+
+    [{worker_pid, _}] =
+      Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/telemetry-reconnect")
+
     %{session: session} = :sys.get_state(worker_pid)
     :gen_tcp.close(session.conn.socket)
 
@@ -478,8 +535,13 @@ defmodule S2.StoreIntegrationTest do
     # Wait for async reconnect to complete
     {:ok, _} = retry_until_ok(fn -> Chat.append("chat/telemetry-reconnect", msg) end)
 
-    assert_receive {:telemetry, [:s2, :store, :reconnect, :start], %{system_time: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000
-    assert_receive {:telemetry, [:s2, :store, :reconnect, :stop], %{duration: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000
+    assert_receive {:telemetry, [:s2, :store, :reconnect, :start], %{system_time: _},
+                    %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}},
+                   1_000
+
+    assert_receive {:telemetry, [:s2, :store, :reconnect, :stop], %{duration: _},
+                    %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}},
+                   1_000
   end
 
   test "telemetry events are emitted on listener connect" do
@@ -487,9 +549,14 @@ defmodule S2.StoreIntegrationTest do
 
     test_pid = self()
 
-    :telemetry.attach("test-listener-connect", [:s2, :store, :listener, :connect], fn event, measurements, metadata, _ ->
-      send(test_pid, {:telemetry, event, measurements, metadata})
-    end, nil)
+    :telemetry.attach(
+      "test-listener-connect",
+      [:s2, :store, :listener, :connect],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
 
     on_exit(fn ->
       :telemetry.detach("test-listener-connect")
@@ -497,7 +564,9 @@ defmodule S2.StoreIntegrationTest do
 
     {:ok, _} = Chat.listen("chat/telemetry-listen", fn _msg -> :ok end)
 
-    assert_receive {:telemetry, [:s2, :store, :listener, :connect], %{system_time: _}, %{stream: "chat/telemetry-listen"}}, 1_000
+    assert_receive {:telemetry, [:s2, :store, :listener, :connect], %{system_time: _},
+                    %{stream: "chat/telemetry-listen"}},
+                   1_000
   end
 
   test "worker closes session on shutdown" do
@@ -563,10 +632,11 @@ defmodule S2.StoreIntegrationTest do
       send(test_pid, {:batch_msg, msg})
     end)
 
-    received = for _ <- 1..3 do
-      assert_receive {:batch_msg, %Chat.Message{} = msg}, 5_000
-      msg
-    end
+    received =
+      for _ <- 1..3 do
+        assert_receive {:batch_msg, %Chat.Message{} = msg}, 5_000
+        msg
+      end
 
     assert Enum.map(received, & &1.text) == ["batch-1", "batch-2", "batch-3"]
   end
@@ -594,22 +664,45 @@ defmodule S2.StoreIntegrationTest do
     # Use a unique registry to avoid conflicts with the main test store
     gzip_store = Module.concat(TestS2, GzipTest)
     config = %{config | store: gzip_store}
-    start_supervised!(%{id: :gzip_store, start: {S2.Store.Supervisor, :start_link, [config]}, type: :supervisor})
+
+    start_supervised!(%{
+      id: :gzip_store,
+      start: {S2.Store.Supervisor, :start_link, [config]},
+      type: :supervisor
+    })
 
     on_exit(fn -> cleanup_basin(client, basin) end)
 
     stream = "chat/gzip-test"
-    S2.Streams.create_stream(%S2.CreateStreamRequest{stream: stream}, server: client, basin: basin)
+
+    S2.Streams.create_stream(%S2.CreateStreamRequest{stream: stream},
+      server: client,
+      basin: basin
+    )
 
     # Append with gzip compression
     S2.Store.Supervisor.ensure_worker(gzip_store, stream)
-    {:ok, _ack} = S2.Store.StreamWorker.append(gzip_store, stream, %{"text" => "compressed!"}, config.serializer)
+
+    {:ok, _ack} =
+      S2.Store.StreamWorker.append(
+        gzip_store,
+        stream,
+        %{"text" => "compressed!"},
+        config.serializer
+      )
 
     # Read back — decompression should happen transparently
     test_pid = self()
-    {:ok, _listener} = S2.Store.Supervisor.listen(gzip_store, stream, fn msg ->
-      send(test_pid, {:msg, msg})
-    end, [])
+
+    {:ok, _listener} =
+      S2.Store.Supervisor.listen(
+        gzip_store,
+        stream,
+        fn msg ->
+          send(test_pid, {:msg, msg})
+        end,
+        []
+      )
 
     assert_receive {:msg, %{"text" => "compressed!"}}, 5_000
   end

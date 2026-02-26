@@ -26,8 +26,12 @@ defmodule S2.Error do
   def message(%__MODULE__{status: nil, code: nil, message: msg}), do: msg || "unknown error"
   def message(%__MODULE__{status: status, code: nil, message: nil}), do: "HTTP #{status}"
   def message(%__MODULE__{status: status, code: nil, message: msg}), do: "HTTP #{status}: #{msg}"
-  def message(%__MODULE__{status: status, code: code, message: nil}), do: "HTTP #{status} (#{code})"
-  def message(%__MODULE__{status: status, code: code, message: msg}), do: "HTTP #{status} (#{code}): #{msg}"
+
+  def message(%__MODULE__{status: status, code: code, message: nil}),
+    do: "HTTP #{status} (#{code})"
+
+  def message(%__MODULE__{status: status, code: code, message: msg}),
+    do: "HTTP #{status} (#{code}): #{msg}"
 
   def from_response(%{status: status, body: %{"code" => code, "message" => message}}) do
     %__MODULE__{code: code, message: message, status: status}

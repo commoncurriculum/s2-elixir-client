@@ -21,7 +21,17 @@ defmodule S2.S2S.AppendSession do
   @typedoc "An open append session."
   @type t :: %__MODULE__{}
 
-  defstruct [:conn, :request_ref, :basin, :stream, :owner_pid, recv_timeout: 5_000, compression: :none, closed: false, data: <<>>]
+  defstruct [
+    :conn,
+    :request_ref,
+    :basin,
+    :stream,
+    :owner_pid,
+    recv_timeout: 5_000,
+    compression: :none,
+    closed: false,
+    data: <<>>
+  ]
 
   @doc """
   Open a new streaming append session.
@@ -130,9 +140,15 @@ defmodule S2.S2S.AppendSession do
             session = %{session | conn: conn}
 
             case check_session_status(responses, session.request_ref) do
-              {:ok, 200} -> {:ok, session}
-              {:ok, status} -> {:error, %S2.Error{status: status, message: "unexpected status #{status}"}, session.conn}
-              :continue -> wait_for_headers(session, dl)
+              {:ok, 200} ->
+                {:ok, session}
+
+              {:ok, status} ->
+                {:error, %S2.Error{status: status, message: "unexpected status #{status}"},
+                 session.conn}
+
+              :continue ->
+                wait_for_headers(session, dl)
             end
 
           {:error, conn, _error, _responses} ->

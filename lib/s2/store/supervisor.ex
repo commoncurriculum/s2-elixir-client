@@ -64,11 +64,20 @@ defmodule S2.Store.Supervisor do
     }
 
     Task.Supervisor.start_child(task_sup_name(store), fn ->
-      :telemetry.execute([:s2, :store, :listener, :connect], %{system_time: System.system_time()}, %{stream: stream})
+      :telemetry.execute(
+        [:s2, :store, :listener, :connect],
+        %{system_time: System.system_time()},
+        %{stream: stream}
+      )
 
       with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
            {:ok, seq_num, conn} <- resolve_start_position(conn, config, stream, opts),
-           {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, stream, seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout) do
+           {:ok, session} <-
+             S2.S2S.ReadSession.open(conn, config.basin, stream,
+               seq_num: seq_num,
+               token: config.token,
+               recv_timeout: config.recv_timeout
+             ) do
         S2.Store.TailLoop.run(session, serializer, callback, listener_config)
       else
         {:error, reason, _conn} -> listener_start_failed(stream, reason)
@@ -86,7 +95,12 @@ defmodule S2.Store.Supervisor do
 
   defp listener_start_failed(stream, reason) do
     Logger.error("S2 listener failed to start for #{stream}: #{inspect(reason)}")
-    :telemetry.execute([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{stream: stream, reason: reason})
+
+    :telemetry.execute([:s2, :store, :listener, :failed], %{system_time: System.system_time()}, %{
+      stream: stream,
+      reason: reason
+    })
+
     {:error, reason}
   end
 

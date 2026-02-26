@@ -35,7 +35,42 @@ defmodule S2.MixProject do
     [
       main: "readme",
       extras: ["README.md"],
-      source_ref: "v#{@version}"
+      source_ref: "v#{@version}",
+      skip_undefined_reference_warnings_on: [
+        "S2.S2S.Append",
+        "S2.S2S.AppendSession",
+        "S2.S2S.Read",
+        "S2.S2S.ReadSession",
+        "S2.S2S.CheckTail",
+        "S2.Patterns.Serialization"
+      ],
+      groups_for_modules: [
+        Store: [
+          S2.Store
+        ],
+        "Control Plane": [
+          S2.Client,
+          S2.Config,
+          S2.Basins,
+          S2.Streams,
+          S2.AccessTokens,
+          S2.Metrics
+        ],
+        "Data Plane (S2S)": [
+          S2.S2S.Connection,
+          S2.S2S.Append,
+          S2.S2S.AppendSession,
+          S2.S2S.Read,
+          S2.S2S.ReadSession,
+          S2.S2S.CheckTail,
+          S2.S2S.Framing
+        ],
+        "Schemas (Generated)":
+          ~r/^S2\.(?!V1\.|S2S\.|Store|Client|Config|Error|Basins|Streams|AccessTokens|Metrics|Patterns)/,
+        Errors: [
+          S2.Error
+        ]
+      ]
     ]
   end
 

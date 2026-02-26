@@ -100,13 +100,14 @@ defmodule S2.S2S.AppendSessionTest do
         records: [%S2.V1.AppendRecord{body: "cross-process"}]
       }
 
-      task = Task.async(fn ->
-        try do
-          S2.S2S.AppendSession.append(session, input)
-        rescue
-          e in ArgumentError -> {:raised, e}
-        end
-      end)
+      task =
+        Task.async(fn ->
+          try do
+            S2.S2S.AppendSession.append(session, input)
+          rescue
+            e in ArgumentError -> {:raised, e}
+          end
+        end)
 
       assert {:raised, %ArgumentError{message: msg}} = Task.await(task)
       assert msg =~ "must be used from the process that created it"

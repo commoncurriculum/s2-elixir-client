@@ -18,9 +18,12 @@ defmodule S2.Patterns.FramingTest do
 
     test "single-chunk record has no framing headers" do
       [record] = Framing.frame("hello")
-      framing_headers = Enum.filter(record.headers, fn h ->
-        h.name in [Constants.frame_bytes(), Constants.frame_records()]
-      end)
+
+      framing_headers =
+        Enum.filter(record.headers, fn h ->
+          h.name in [Constants.frame_bytes(), Constants.frame_records()]
+        end)
+
       assert framing_headers == []
     end
   end
@@ -105,7 +108,8 @@ defmodule S2.Patterns.FramingTest do
       {:incomplete, assembler} = Framing.Assembler.add(assembler, to_sequenced(hd(records1), 0))
 
       # Feeding the start of a second multi-chunk message should error
-      assert {:error, :unexpected_record} = Framing.Assembler.add(assembler, to_sequenced(hd(records2), 1))
+      assert {:error, :unexpected_record} =
+               Framing.Assembler.add(assembler, to_sequenced(hd(records2), 1))
     end
 
     test "multiple messages in sequence" do

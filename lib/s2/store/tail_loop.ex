@@ -45,7 +45,10 @@ defmodule S2.Store.TailLoop do
             do_loop(session, serializer, callback, config, reader, connector, seq_num)
 
           {:error, reason} ->
-            Logger.error("S2 listener giving up after max retries stream=#{config.stream} reason=#{inspect(reason)}")
+            Logger.error(
+              "S2 listener giving up after max retries stream=#{config.stream} reason=#{inspect(reason)}"
+            )
+
             {:error, reason}
         end
 
@@ -83,8 +86,12 @@ defmodule S2.Store.TailLoop do
 
   defp reconnect(config, seq_num) do
     with {:ok, conn} <- S2.S2S.Connection.open(config.base_url, token: config.token),
-         {:ok, session} <- S2.S2S.ReadSession.open(conn, config.basin, config.stream,
-           seq_num: seq_num, token: config.token, recv_timeout: config.recv_timeout) do
+         {:ok, session} <-
+           S2.S2S.ReadSession.open(conn, config.basin, config.stream,
+             seq_num: seq_num,
+             token: config.token,
+             recv_timeout: config.recv_timeout
+           ) do
       {:ok, session}
     else
       {:error, reason, _conn} -> {:error, reason}

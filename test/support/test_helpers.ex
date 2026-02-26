@@ -32,7 +32,9 @@ defmodule S2.TestHelpers do
 
   defp do_retry(fun, attempts, delay, _last_result) do
     case fun.() do
-      {:ok, _} = ok -> ok
+      {:ok, _} = ok ->
+        ok
+
       other ->
         Process.sleep(delay)
         do_retry(fun, attempts - 1, delay, other)
