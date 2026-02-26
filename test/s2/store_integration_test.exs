@@ -350,6 +350,145 @@ defmodule S2.StoreIntegrationTest do
     assert Enum.uniq(pids) |> length() == 1
   end
 
+  test "backpressure returns {:error, :overloaded} when mailbox is full" do
+    {:ok, _} = Chat.create_room("backpressure")
+
+    # Start the worker
+    {:ok, _} = Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "warmup"))
+
+    # Set max_queue_size to 0 so every call is rejected when anything else is queued
+    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/backpressure")
+    :sys.replace_state(worker_pid, fn state ->
+      put_in(state, [:config, :max_queue_size], 0)
+    end)
+
+    # Suspend the worker so calls pile up in its mailbox
+    :sys.suspend(worker_pid)
+
+    # Fire off several async appends — they will queue in the mailbox
+    tasks = for i <- 1..3 do
+      Task.async(fn ->
+        Chat.append("chat/backpressure", Chat.Message.new(user: "user#{i}", text: "msg#{i}"))
+      end)
+    end
+
+    # Give messages time to land in the mailbox
+    Process.sleep(100)
+
+    # Resume — each call sees other messages still queued, should reject as overloaded
+    :sys.resume(worker_pid)
+
+    results = Task.await_many(tasks, 30_000)
+
+    # At least one should be overloaded
+    assert Enum.any?(results, &match?({:error, :overloaded}, &1)),
+      "Expected at least one {:error, :overloaded} but got: #{inspect(results)}"
+
+    # Restore max_queue_size and verify the worker still works
+    :sys.replace_state(worker_pid, fn state ->
+      put_in(state, [:config, :max_queue_size], 1000)
+    end)
+
+    assert {:ok, _ack} = Chat.append("chat/backpressure", Chat.Message.new(user: "alice", text: "after"))
+  end
+
+  test "telemetry events are emitted on append" do
+    {:ok, _} = Chat.create_room("telemetry")
+
+    test_pid = self()
+
+    # Attach telemetry handlers
+    :telemetry.attach("test-append-start", [:s2, :store, :append, :start], fn event, measurements, metadata, _ ->
+      send(test_pid, {:telemetry, event, measurements, metadata})
+    end, nil)
+
+    :telemetry.attach("test-append-stop", [:s2, :store, :append, :stop], fn event, measurements, metadata, _ ->
+      send(test_pid, {:telemetry, event, measurements, metadata})
+    end, nil)
+
+    on_exit(fn ->
+      :telemetry.detach("test-append-start")
+      :telemetry.detach("test-append-stop")
+    end)
+
+    {:ok, _} = Chat.append("chat/telemetry", Chat.Message.new(user: "alice", text: "hi"))
+
+    assert_receive {:telemetry, [:s2, :store, :append, :start], %{system_time: _}, %{stream: "chat/telemetry"}}, 1_000
+    assert_receive {:telemetry, [:s2, :store, :append, :stop], %{duration: duration}, %{stream: "chat/telemetry"}}, 1_000
+    assert is_integer(duration) and duration > 0
+  end
+
+  test "telemetry events are emitted on reconnect" do
+    {:ok, _} = Chat.create_room("telemetry-reconnect")
+
+    test_pid = self()
+
+    :telemetry.attach("test-reconnect-start", [:s2, :store, :reconnect, :start], fn event, measurements, metadata, _ ->
+      send(test_pid, {:telemetry, event, measurements, metadata})
+    end, nil)
+
+    :telemetry.attach("test-reconnect-stop", [:s2, :store, :reconnect, :stop], fn event, measurements, metadata, _ ->
+      send(test_pid, {:telemetry, event, measurements, metadata})
+    end, nil)
+
+    on_exit(fn ->
+      :telemetry.detach("test-reconnect-start")
+      :telemetry.detach("test-reconnect-stop")
+    end)
+
+    # Start worker, then kill its connection
+    {:ok, _} = Chat.append("chat/telemetry-reconnect", Chat.Message.new(user: "alice", text: "before"))
+    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/telemetry-reconnect")
+    %{session: session} = :sys.get_state(worker_pid)
+    :gen_tcp.close(session.conn.socket)
+
+    # Next append triggers reconnect
+    {:ok, _} = Chat.append("chat/telemetry-reconnect", Chat.Message.new(user: "bob", text: "after"))
+
+    assert_receive {:telemetry, [:s2, :store, :reconnect, :start], %{system_time: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000
+    assert_receive {:telemetry, [:s2, :store, :reconnect, :stop], %{duration: _}, %{stream: "chat/telemetry-reconnect", component: :writer, attempt: 1}}, 1_000
+  end
+
+  test "telemetry events are emitted on listener connect" do
+    {:ok, _} = Chat.create_room("telemetry-listen")
+
+    test_pid = self()
+
+    :telemetry.attach("test-listener-connect", [:s2, :store, :listener, :connect], fn event, measurements, metadata, _ ->
+      send(test_pid, {:telemetry, event, measurements, metadata})
+    end, nil)
+
+    on_exit(fn ->
+      :telemetry.detach("test-listener-connect")
+    end)
+
+    {:ok, _} = Chat.listen("chat/telemetry-listen", fn _msg -> :ok end)
+
+    assert_receive {:telemetry, [:s2, :store, :listener, :connect], %{system_time: _}, %{stream: "chat/telemetry-listen"}}, 1_000
+  end
+
+  test "worker closes session on shutdown" do
+    {:ok, _} = Chat.create_room("shutdown")
+
+    # Start worker
+    {:ok, _} = Chat.append("chat/shutdown", Chat.Message.new(user: "alice", text: "hi"))
+
+    [{worker_pid, _}] = Registry.lookup(S2.StoreIntegrationTest.TestS2.Registry, "chat/shutdown")
+    %{session: session} = :sys.get_state(worker_pid)
+    socket = session.conn.socket
+
+    # The TCP socket should be open
+    assert {:ok, _} = :inet.peername(socket)
+
+    # Stop the worker gracefully — terminate/2 should close the session
+    ref = Process.monitor(worker_pid)
+    GenServer.stop(worker_pid, :normal)
+    assert_receive {:DOWN, ^ref, :process, ^worker_pid, :normal}
+
+    # The socket should now be closed
+    assert {:error, _} = :inet.peername(socket)
+  end
+
   test "Message.new validates required fields" do
     assert_raise Ecto.InvalidChangesetError, fn ->
       Chat.Message.new(text: "no user")
