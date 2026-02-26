@@ -313,35 +313,46 @@ defmodule S2.S2S.ProxyTest do
   end
 
   describe "proxy down (connection refused)" do
-    test "Connection.open fails when proxy is down", %{proxy_port: proxy_port} do
+    test "requests fail when proxy is down", %{
+      proxy_port: proxy_port,
+      basin: basin,
+      stream: stream
+    } do
       proxy = S2.ProxyHelper.proxy!()
 
-      # Don't use ToxiproxyEx.down!/2 here — its after-block re-enables the proxy
-      # via Tesla/Mint in active mode, which can pick up stale {:tcp_closed, socket}
-      # messages left by the failed Connection.open through Docker's port proxy.
-      # Instead, manually disable/enable with a flush in between.
       ToxiproxyEx.Proxy.disable(proxy)
 
       try do
-        assert {:error, _} = S2.S2S.Connection.open("http://localhost:#{proxy_port}")
+        # In Docker, the port proxy accepts TCP connections even when the upstream
+        # container port is disabled, so Connection.open may succeed (returning a
+        # :handshaking connection). Instead, verify that actual requests fail.
+        case S2.S2S.Connection.open("http://localhost:#{proxy_port}") do
+          {:error, _} ->
+            :ok
+
+          {:ok, conn} ->
+            input = %S2.V1.AppendInput{
+              records: [%S2.V1.AppendRecord{body: "should-fail"}]
+            }
+
+            assert {:error, _reason, _conn} = S2.S2S.Append.call(conn, basin, stream, input)
+        end
       after
-        flush_stale_tcp_messages()
+        # Drain stale TCP messages from the failed/closed connection so they don't
+        # interfere with subsequent Mint active-mode requests (e.g. Proxy.enable).
+        Process.sleep(50)
+        drain_tcp_messages()
         ToxiproxyEx.Proxy.enable(proxy)
       end
     end
   end
 
-  # In Docker, the port proxy briefly accepts TCP connections before closing them,
-  # leaving stale messages in the process mailbox. A brief sleep lets them arrive,
-  # then we drain them so Tesla/Mint's active-mode receive doesn't pick them up.
-  defp flush_stale_tcp_messages do
-    Process.sleep(50)
-
+  defp drain_tcp_messages do
     receive do
       msg
       when is_tuple(msg) and
              elem(msg, 0) in [:tcp, :tcp_closed, :tcp_error, :ssl, :ssl_closed, :ssl_error] ->
-        flush_stale_tcp_messages()
+        drain_tcp_messages()
     after
       0 -> :ok
     end
