@@ -191,9 +191,13 @@ defmodule S2.S2S.AppendSession do
     {:continue, session, acc}
   end
 
+  # Only this connection's socket messages: the owner may be a GenServer with
+  # calls queued, and taking those would drop them.
   defp do_receive_ack(session, acc, dl) do
+    socket = Mint.HTTP.get_socket(session.conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_ack_response(Mint.HTTP2.stream(session.conn, message), session, acc) do
           {:continue, session, acc} -> do_receive_ack(session, acc, dl)
           result -> result
@@ -230,8 +234,10 @@ defmodule S2.S2S.AppendSession do
   end
 
   defp drain_final_response(session, dl) do
+    socket = Mint.HTTP.get_socket(session.conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_drain_response(Mint.HTTP2.stream(session.conn, message), session) do
           {:continue, session} -> drain_final_response(session, dl)
           result -> result

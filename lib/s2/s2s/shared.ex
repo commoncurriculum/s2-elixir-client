@@ -72,8 +72,10 @@ defmodule S2.S2S.Shared do
   end
 
   defp do_receive_complete(conn, request_ref, acc, dl) do
+    socket = Mint.HTTP.get_socket(conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_complete_response(Mint.HTTP2.stream(conn, message), request_ref, acc) do
           {:continue, conn, acc} -> do_receive_complete(conn, request_ref, acc, dl)
           result -> result
@@ -347,8 +349,10 @@ defmodule S2.S2S.Shared do
   end
 
   defp do_wait_for_headers(conn, request_ref, dl) do
+    socket = Mint.HTTP.get_socket(conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_headers_response(Mint.HTTP2.stream(conn, message), request_ref) do
           {:continue, conn} -> do_wait_for_headers(conn, request_ref, dl)
           result -> result

@@ -87,8 +87,10 @@ defmodule S2.S2S.Read do
   end
 
   defp receive_first_batch(conn, request_ref, acc, dl) do
+    socket = Mint.HTTP.get_socket(conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_first_batch_response(
                Mint.HTTP2.stream(conn, message),
                request_ref,
