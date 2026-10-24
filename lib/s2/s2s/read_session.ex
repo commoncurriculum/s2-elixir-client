@@ -173,8 +173,10 @@ defmodule S2.S2S.ReadSession do
   end
 
   defp receive_batch(session, dl) do
+    socket = Mint.HTTP.get_socket(session.conn)
+
     receive do
-      message ->
+      message when elem(message, 1) == socket ->
         case handle_batch_response(
                Mint.HTTP2.stream(session.conn, message),
                session,

@@ -689,6 +689,23 @@ defmodule S2.StoreIntegrationTest do
     assert Enum.map(received, & &1.text) == ["batch-1", "batch-2", "batch-3"]
   end
 
+  test "concurrent appends to one stream all succeed" do
+    {:ok, _} = Chat.create_room("concurrent")
+
+    # While the worker waits for one append's ack, the other calls sit in its
+    # mailbox.
+    results =
+      1..20
+      |> Enum.map(fn i ->
+        Task.async(fn ->
+          Chat.append_batch("chat/concurrent", [Chat.Message.new(user: "alice", text: "#{i}")])
+        end)
+      end)
+      |> Task.await_many(10_000)
+
+    assert Enum.all?(results, &match?({:ok, _ack}, &1)), inspect(results)
+  end
+
   test "append and listen with gzip compression" do
     # Start a separate store with gzip compression
     basin = unique_basin_name("store-gzip")
