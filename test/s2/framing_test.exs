@@ -1,7 +1,7 @@
-defmodule S2.S2S.FramingTest do
+defmodule S2.FramingTest do
   use ExUnit.Case, async: true
 
-  alias S2.S2S.Framing
+  alias S2.Framing
 
   describe "encode/2" do
     test "encodes a regular message with no compression" do

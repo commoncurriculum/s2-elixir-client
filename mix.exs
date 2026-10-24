@@ -43,19 +43,16 @@ defmodule S2.MixProject do
       extras: ["README.md"],
       source_ref: "v#{@version}",
       skip_undefined_reference_warnings_on: [
-        "S2.S2S.Append",
-        "S2.S2S.AppendSession",
-        "S2.S2S.Read",
-        "S2.S2S.ReadSession",
-        "S2.S2S.CheckTail",
         "S2.Patterns.Serialization"
       ],
       groups_for_modules: [
         Overview: [
           S2
         ],
-        Store: [
-          S2.Store
+        "Data Plane": [
+          S2.Connection,
+          S2.AppendStream,
+          S2.Framing
         ],
         "Control Plane": [
           S2.Client,
@@ -65,20 +62,11 @@ defmodule S2.MixProject do
           S2.AccessTokens,
           S2.Metrics
         ],
-        "Data Plane (S2S)": [
-          S2.S2S.Connection,
-          S2.S2S.Append,
-          S2.S2S.AppendSession,
-          S2.S2S.Read,
-          S2.S2S.ReadSession,
-          S2.S2S.CheckTail,
-          S2.S2S.Framing
-        ],
         Patterns: [
           S2.Patterns.Serialization
         ],
         "Schemas (Generated)":
-          ~r/^S2\.(?!V1\.|S2S\.|Store|Client|Config|Error|Basins|Streams|AccessTokens|Metrics|Patterns)/,
+          ~r/^S2\.(?!V1\.|Connection|AppendStream|Framing|Client|Config|Error|Basins|Streams|AccessTokens|Metrics|Patterns)/,
         Errors: [
           S2.Error
         ]
@@ -103,7 +91,6 @@ defmodule S2.MixProject do
       {:jason, "~> 1.4"},
       {:protox, "~> 2.0"},
       {:mint, "~> 1.6"},
-      {:telemetry, "~> 1.0"},
       {:ezstd, "~> 1.1", optional: true},
       {:excoveralls, "~> 0.18", only: :test},
       {:toxiproxy_ex, "~> 2.0", only: :test},

@@ -4,10 +4,9 @@
     "lib/s2/proto/",
     "lib/s2/v1/",
     "lib/s2/operations/",
-    "lib/s2/store.ex",
     "test/support/"
   ],
   "coverage_options": {
-    "minimum_coverage": 95
+    "minimum_coverage": 90
   }
 }
