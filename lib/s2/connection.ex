@@ -159,18 +159,9 @@ defmodule S2.Connection do
   def handle_info({:idle, stream, request}, state) do
     case state.appends[stream] do
       %{request: ^request, outgoing: ""} = entry ->
-        if AppendStream.idle?(entry.queue) do
-          state = finish(state, request)
-
-          {:noreply,
-           %{
-             state
-             | appends: Map.delete(state.appends, stream),
-               requests: Map.delete(state.requests, request)
-           }}
-        else
-          {:noreply, state}
-        end
+        if AppendStream.idle?(entry.queue),
+          do: {:noreply, close_append(state, stream)},
+          else: {:noreply, state}
 
       _other ->
         {:noreply, state}
@@ -208,10 +199,13 @@ defmodule S2.Connection do
     case Mint.HTTP2.stream(conn, message) do
       {:ok, conn, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &respond(&2, &1))
-        # An ack may free the next batch, and a window update waiting bytes.
+        # An ack may free the next batch, a window update waiting bytes, and
+        # an ended request room for a stream waiting to open its session.
         {:noreply,
          state.appends
-         |> Enum.filter(fn {_stream, entry} -> entry.request != nil end)
+         |> Enum.reject(fn {_stream, entry} ->
+           entry.request == nil and AppendStream.idle?(entry.queue)
+         end)
          |> Enum.reduce(state, fn {stream, _entry}, state -> send_appends(state, stream) end)}
 
       {:error, conn, error, responses} ->
@@ -240,6 +234,8 @@ defmodule S2.Connection do
       if kind == :read,
         do: [{"accept", "application/protobuf"} | state.headers],
         else: state.headers
+
+    state = make_room(state)
 
     case Mint.HTTP2.request(state.conn, "GET", path, headers, nil) do
       {:ok, conn, request} ->
@@ -343,37 +339,7 @@ defmodule S2.Connection do
         state
 
       entry.request == nil and not AppendStream.idle?(entry.queue) ->
-        case Mint.HTTP2.request(
-               state.conn,
-               "POST",
-               records_path(stream),
-               [{"content-type", "s2s/proto"} | state.headers],
-               :stream
-             ) do
-          {:ok, conn, request} ->
-            entry =
-              Map.merge(entry, %{
-                request: request,
-                buffer: "",
-                outgoing: "",
-                status: nil,
-                draining: false
-              })
-
-            state = %{
-              state
-              | conn: conn,
-                appends: Map.put(state.appends, stream, entry),
-                requests: Map.put(state.requests, request, {:append, stream})
-            }
-
-            send_appends(state, stream)
-
-          {:error, conn, error} ->
-            if Mint.HTTP.open?(conn),
-              do: retry_appends(%{state | conn: conn}, stream, error),
-              else: lost(%{state | conn: conn}, error)
-        end
+        open_append(make_room(state), stream)
 
       entry.request != nil and not entry.draining ->
         {frames, queue} = AppendStream.take(entry.queue, now(), state.config.max_sent_bytes)
@@ -392,6 +358,71 @@ defmodule S2.Connection do
       true ->
         state
     end
+  end
+
+  # With the connection at its request limit, the stream waits for a request
+  # to end.
+  defp open_append(state, stream) do
+    if full?(state) do
+      state
+    else
+      case Mint.HTTP2.request(
+             state.conn,
+             "POST",
+             records_path(stream),
+             [{"content-type", "s2s/proto"} | state.headers],
+             :stream
+           ) do
+        {:ok, conn, request} ->
+          entry =
+            Map.merge(state.appends[stream], %{
+              request: request,
+              buffer: "",
+              outgoing: "",
+              status: nil,
+              draining: false
+            })
+
+          state = %{
+            state
+            | conn: conn,
+              appends: Map.put(state.appends, stream, entry),
+              requests: Map.put(state.requests, request, {:append, stream})
+          }
+
+          send_appends(state, stream)
+
+        {:error, conn, error} ->
+          if Mint.HTTP.open?(conn),
+            do: retry_appends(%{state | conn: conn}, stream, error),
+            else: lost(%{state | conn: conn}, error)
+      end
+    end
+  end
+
+  defp full?(state),
+    do:
+      Mint.HTTP2.open_request_count(state.conn) >=
+        Mint.HTTP2.get_server_setting(state.conn, :max_concurrent_streams)
+
+  # At the connection's request limit, closes an append session with nothing
+  # to send or acknowledge, if there is one.
+  defp make_room(state) do
+    idle =
+      full?(state) &&
+        Enum.find(state.appends, fn {_stream, entry} ->
+          entry.request != nil and entry.outgoing == "" and AppendStream.idle?(entry.queue)
+        end)
+
+    case idle do
+      {stream, _entry} -> close_append(state, stream)
+      _room_or_none_idle -> state
+    end
+  end
+
+  defp close_append(state, stream) do
+    state = cancel(state, state.appends[stream].request)
+    %{state | appends: Map.delete(state.appends, stream)}
   end
 
   # Sends as much of the session's outgoing bytes as HTTP/2 flow control
@@ -525,6 +556,7 @@ defmodule S2.Connection do
   defp open_read(%{conn: nil} = state, _listener), do: state
 
   defp open_read(state, listener) do
+    state = make_room(state)
     entry = state.listeners[listener]
 
     query =
@@ -566,13 +598,18 @@ defmodule S2.Connection do
         {:ok, batch} = Protox.decode(body, S2.V1.ReadBatch)
 
         entry =
-          case batch.records do
-            [] ->
-              entry
+          cond do
+            batch.records != [] ->
+              send(entry.pid, {S2, listener, {:records, batch.records}})
+              %{entry | from: List.last(batch.records).seq_num + 1, delay: 100}
 
-            records ->
-              send(entry.pid, {S2, listener, {:records, records}})
-              %{entry | from: List.last(records).seq_num + 1, delay: 100}
+            # A listener from the tail learns where that was from its first
+            # frame, so a reopened session doesn't skip what came meanwhile.
+            entry.from == :tail and batch.tail != nil ->
+              %{entry | from: batch.tail.seq_num}
+
+            true ->
+              entry
           end
 
         state = put_in(state.listeners[listener], %{entry | buffer: rest})

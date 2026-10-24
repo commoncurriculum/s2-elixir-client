@@ -68,6 +68,34 @@ defmodule S2.DataPlaneTest do
     end)
   end
 
+  test "more streams than the server's concurrent stream limit share one connection, closing idle append sessions to make room",
+       %{basin: basin} do
+    name = start_client(basin, pool_size: 1)
+    # The server's settings have come once a call has.
+    {:ok, _ack} = S2.append(name, unique_stream_name(), [record("a")])
+    %{conn: conn} = :sys.get_state(connection(name, "any"))
+    limit = Mint.HTTP2.get_server_setting(conn, :max_concurrent_streams)
+    streams = Enum.map(1..(limit + 50), fn number -> "#{unique_stream_name()}-#{number}" end)
+
+    log =
+      capture_log(fn ->
+        results =
+          streams
+          |> Task.async_stream(&S2.append(name, &1, [record("a")]), max_concurrency: limit + 50)
+          |> Enum.map(fn {:ok, result} -> result end)
+
+        assert Enum.all?(results, &match?({:ok, %{start: %{seq_num: 0}}}, &1))
+
+        # Again, with every session idle: each new stream closes one.
+        assert streams
+               |> Task.async_stream(&S2.append(name, &1, [record("b")]), max_concurrency: 50)
+               |> Enum.all?(&match?({:ok, {:ok, %{start: %{seq_num: 1}}}}, &1))
+      end)
+
+    refute log =~ "retrying"
+    assert Mint.HTTP2.open_request_count(:sys.get_state(connection(name, "any")).conn) <= limit
+  end
+
   test "batches far over HTTP/2's flow control window go out as the window opens, on many streams at once",
        %{name: name} do
     body = :binary.copy("x", 900 * 1024)

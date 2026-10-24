@@ -94,6 +94,7 @@ What a caller can count on:
 - **Each batch is encoded once.** When a session fails, its unacknowledged batches go again first, byte for byte, then new ones. A refusal for good (a 4xx terminal frame) fails only the oldest batch's callers.
 - **S2's drain signal is followed.** A frame flagged "reconnect" stops new sends on that session and half-closes it once what's out is sent; the next batches go on a new session.
 - **Silence is a dead connection.** A read session gets a frame (records or a heartbeat) at least every 15 s. If one is silent past `:heartbeat_deadline`, or an append waits that long for its ack, the connection is dropped and made again with backoff from 100 ms to 5 s. Every session moves to the new connection.
+- **The server's request limit is respected.** S2 allows 128 open requests per connection. At the limit, an append session with nothing in flight is closed to make room; with none idle, a stream waits for a request to end. Size `:pool_size` for the streams you append to and follow at once.
 - **HTTP/2 flow control is respected.** Bytes beyond the send window wait for the server's window update.
 
 ## Patterns

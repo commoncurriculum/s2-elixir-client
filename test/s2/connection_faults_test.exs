@@ -116,6 +116,24 @@ defmodule S2.ConnectionFaultsTest do
     assert log =~ "S2 connection lost"
   end
 
+  test "a listener from the tail that reconnects reads on from where it was, not from the new tail",
+       %{basin: basin, endpoint: endpoint} do
+    name = start_client(basin, basin_endpoint: endpoint, pool_size: 1)
+    direct = start_client(basin, pool_size: 1)
+    stream = unique_stream_name()
+    {:ok, _ack} = S2.append(direct, stream, [record("before")])
+    {:ok, listener} = S2.listen(name, stream, from: :tail)
+    Process.sleep(500)
+
+    capture_log(fn ->
+      ProxyHelper.enable!(false)
+      {:ok, _ack} = S2.append(direct, stream, [record("1"), record("2")])
+      ProxyHelper.enable!(true)
+      {:ok, _ack} = S2.append(direct, stream, [record("3")])
+      assert bodies(listened(listener, 3)) == ["1", "2", "3"]
+    end)
+  end
+
   test "with latency, concurrent appends still batch and pipeline, and every caller gets its own range",
        %{basin: basin, endpoint: endpoint} do
     name = start_client(basin, basin_endpoint: endpoint, pool_size: 1)
