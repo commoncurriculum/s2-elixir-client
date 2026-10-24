@@ -3,7 +3,6 @@ defmodule S2.S2S.ReadLogicTest do
 
   alias S2.S2S.Read
 
-
   defp make_read_batch_frame(records) do
     batch = %S2.V1.ReadBatch{records: records}
     {iodata, _size} = Protox.encode!(batch)
