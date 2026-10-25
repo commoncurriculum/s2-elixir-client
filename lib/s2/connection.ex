@@ -47,9 +47,11 @@ defmodule S2.Connection do
       headers: headers,
       conn: nil,
       delay: 100,
-      # stream => %{queue:, request:, buffer:, outgoing:, draining:, delay:}
+      # stream => %{queue:, request:, buffer:, outgoing:, draining:, status:, seen_at:, delay:}
       appends: %{},
-      # listener => %{pid:, monitor:, stream:, from:, request:, buffer:, seen_at:, delay:}
+      # Streams with work and no session, waiting for a request to end.
+      waiting: MapSet.new(),
+      # listener (its pid's monitor) => %{pid:, stream:, from:, request:, buffer:, status:, seen_at:, delay:}
       listeners: %{},
       # request => {:append, stream} | {:listen, listener} | {:read | :tail, from}
       requests: %{},
@@ -116,11 +118,10 @@ defmodule S2.Connection do
     do: request(state, from, :tail, records_path(stream) <> "/tail")
 
   def handle_call({:listen, stream, pid, from_position}, _from, state) do
-    listener = make_ref()
+    listener = Process.monitor(pid)
 
     entry = %{
       pid: pid,
-      monitor: Process.monitor(pid),
       stream: stream,
       from: from_position,
       request: nil,
@@ -138,8 +139,8 @@ defmodule S2.Connection do
       nil ->
         {:reply, {:error, :not_found}, state}
 
-      entry ->
-        Process.demonitor(entry.monitor, [:flush])
+      _entry ->
+        Process.demonitor(listener, [:flush])
         {:reply, :ok, close_read(state, listener)}
     end
   end
@@ -188,25 +189,28 @@ defmodule S2.Connection do
       else: {:noreply, state}
   end
 
-  def handle_info({:DOWN, _monitor, :process, pid, _reason}, state) do
-    case Enum.find(state.listeners, fn {_listener, entry} -> entry.pid == pid end) do
-      {listener, _entry} -> {:noreply, close_read(state, listener)}
-      nil -> {:noreply, state}
-    end
+  def handle_info({:DOWN, listener, :process, _pid, _reason}, state) do
+    if Map.has_key?(state.listeners, listener),
+      do: {:noreply, close_read(state, listener)},
+      else: {:noreply, state}
   end
 
   def handle_info(message, %{conn: conn} = state) when conn != nil do
     case Mint.HTTP2.stream(conn, message) do
       {:ok, conn, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &respond(&2, &1))
-        # An ack may free the next batch, a window update waiting bytes, and
-        # an ended request room for a stream waiting to open its session.
-        {:noreply,
-         state.appends
-         |> Enum.reject(fn {_stream, entry} ->
-           entry.request == nil and AppendStream.idle?(entry.queue)
-         end)
-         |> Enum.reduce(state, fn {stream, _entry}, state -> send_appends(state, stream) end)}
+
+        # A stream's own acks send its next batches as they're read. Beyond
+        # that, a window update may free bytes waiting to go out, and an ended
+        # request room for a stream waiting to open its session.
+        blocked =
+          state.appends
+          |> Enum.filter(fn {_stream, entry} -> entry.outgoing != "" end)
+          |> Enum.map(&elem(&1, 0))
+          |> Enum.concat(state.waiting)
+
+        state = %{state | waiting: MapSet.new()}
+        {:noreply, Enum.reduce(blocked, state, &send_appends(&2, &1))}
 
       {:error, conn, error, responses} ->
         state = Enum.reduce(responses, %{state | conn: conn}, &respond(&2, &1))
@@ -364,7 +368,7 @@ defmodule S2.Connection do
   # to end.
   defp open_append(state, stream) do
     if full?(state) do
-      state
+      %{state | waiting: MapSet.put(state.waiting, stream)}
     else
       case Mint.HTTP2.request(
              state.conn,
@@ -495,13 +499,15 @@ defmodule S2.Connection do
         state = cancel(state, entry.request)
         append_ended(state, stream, entry.request, %S2.Error{message: inspect(error)})
 
+      # Every whole frame is read: the acks may have freed the next batches.
       :incomplete ->
-        state
+        send_appends(state, stream)
     end
   end
 
   # The session is over. A refusal for good fails the oldest batch's calls;
-  # anything else sends every unacknowledged batch again.
+  # anything else sends every unacknowledged batch again, after a backoff when
+  # the session failed.
   defp append_ended(state, stream, request, how) do
     entry = state.appends[stream]
     state = %{state | requests: Map.delete(state.requests, request)}
@@ -520,13 +526,14 @@ defmodule S2.Connection do
       entry = %{entry | request: nil, buffer: "", outgoing: ""}
 
       cond do
-        error == nil or not AppendStream.sent?(entry.queue) ->
+        error == nil ->
           state =
             put_in(state.appends[stream], %{entry | queue: AppendStream.requeue(entry.queue)})
 
           send_appends(state, stream)
 
-        S2.Error.retryable?(error) ->
+        # With no batch out, there's none to blame: the session is retried.
+        S2.Error.retryable?(error) or not AppendStream.sent?(entry.queue) ->
           state =
             put_in(state.appends[stream], %{entry | queue: AppendStream.requeue(entry.queue)})
 
@@ -665,7 +672,7 @@ defmodule S2.Connection do
           })
         else
           send(entry.pid, {S2, listener, {:error, error}})
-          Process.demonitor(entry.monitor, [:flush])
+          Process.demonitor(listener, [:flush])
           %{state | listeners: Map.delete(state.listeners, listener)}
         end
     end
@@ -733,7 +740,16 @@ defmodule S2.Connection do
 
     Mint.HTTP.close(state.conn)
     send(self(), :connect)
-    %{state | conn: nil, appends: appends, listeners: listeners, requests: %{}, replies: %{}}
+
+    %{
+      state
+      | conn: nil,
+        appends: appends,
+        waiting: MapSet.new(),
+        listeners: listeners,
+        requests: %{},
+        replies: %{}
+    }
   end
 
   defp records_path(stream), do: "/v1/streams/#{URI.encode_www_form(stream)}/records"
