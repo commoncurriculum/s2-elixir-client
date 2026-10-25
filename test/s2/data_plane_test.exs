@@ -36,7 +36,11 @@ defmodule S2.DataPlaneTest do
     assert ack.start.seq_num == 4
   end
 
-  test "clients racing to create the same streams by appending all get acks", %{basin: basin} do
+  # S2 Lite answers some of the losers 404 stream_not_found instead of 409
+  # transaction_conflict; only the 409 is S2's "retriable".
+  test "clients racing to create the same streams by appending get acks, never a conflict", %{
+    basin: basin
+  } do
     clients = Enum.map(1..4, fn _number -> start_client(basin) end)
     streams = Enum.map(1..50, fn _number -> unique_stream_name() end)
 
@@ -48,8 +52,19 @@ defmodule S2.DataPlaneTest do
       )
       |> Enum.map(fn {:ok, result} -> result end)
 
-    assert Enum.reject(results, &match?({:ok, _ack}, &1)) == []
-    assert Enum.all?(streams, &match?({:ok, %{seq_num: 4}}, S2.check_tail(hd(clients), &1)))
+    assert Enum.reject(results, fn result ->
+             match?({:ok, _ack}, result) or
+               match?({:error, %S2.Error{code: "stream_not_found"}}, result)
+           end) == []
+
+    acked = Enum.count(results, &match?({:ok, _ack}, &1))
+
+    assert streams
+           |> Enum.map(fn stream ->
+             {:ok, %{seq_num: tail}} = S2.check_tail(hd(clients), stream)
+             tail
+           end)
+           |> Enum.sum() == acked
   end
 
   test "concurrent appends to one stream are batched, and each caller gets its own range in order",
