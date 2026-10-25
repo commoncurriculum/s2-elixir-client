@@ -64,8 +64,9 @@ defmodule S2.Error do
 
   @doc """
   Whether trying again may succeed: a timeout, throttling, a server error
-  (including `server_draining`), or no status at all (the connection failed).
+  (including `server_draining`), a `transaction_conflict` (as when appends
+  race to create a stream), or no status at all (the connection failed).
   """
-  def retryable?(%__MODULE__{status: status}),
-    do: status in [nil, 408, 429] or status >= 500
+  def retryable?(%__MODULE__{status: status, code: code}),
+    do: status in [nil, 408, 429] or status >= 500 or code == "transaction_conflict"
 end

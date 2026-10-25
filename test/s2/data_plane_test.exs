@@ -36,6 +36,22 @@ defmodule S2.DataPlaneTest do
     assert ack.start.seq_num == 4
   end
 
+  test "clients racing to create the same streams by appending all get acks", %{basin: basin} do
+    clients = Enum.map(1..4, fn _number -> start_client(basin) end)
+    streams = Enum.map(1..50, fn _number -> unique_stream_name() end)
+
+    results =
+      streams
+      |> Enum.flat_map(fn stream -> Enum.map(clients, &{&1, stream}) end)
+      |> Task.async_stream(fn {client, stream} -> S2.append(client, stream, [record("a")]) end,
+        max_concurrency: 200
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    assert Enum.reject(results, &match?({:ok, _ack}, &1)) == []
+    assert Enum.all?(streams, &match?({:ok, %{seq_num: 4}}, S2.check_tail(hd(clients), &1)))
+  end
+
   test "concurrent appends to one stream are batched, and each caller gets its own range in order",
        %{name: name} do
     stream = unique_stream_name()
