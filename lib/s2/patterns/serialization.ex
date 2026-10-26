@@ -24,7 +24,7 @@ defmodule S2.Patterns.Serialization do
 
   alias S2.Patterns.{RecordFraming, Dedupe}
 
-  @type serializer :: S2.Store.serializer()
+  @type serializer :: %{serialize: (term() -> binary()), deserialize: (binary() -> term())}
   @type writer :: Dedupe.Writer.t()
   @type reader :: %{filter: Dedupe.Filter.t(), assembler: RecordFraming.Assembler.t()}
 

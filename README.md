@@ -1,6 +1,9 @@
 # S2 Elixir SDK
 
-Elixir client for the [S2](https://s2.dev) durable stream API. Protobuf data plane (append, read, check tail) over Mint HTTP/2 + JSON control plane (basins, streams, access tokens, metrics) over Req.
+Elixir client for [S2](https://s2.dev), the durable stream API.
+
+- **Data plane** (append, read, check tail, follow a stream): S2S-framed protobuf over HTTP/2 ([Mint](https://github.com/elixir-mint/mint)), from a small pool of connection processes.
+- **Control plane** (basins, streams, access tokens, metrics): JSON over [Req](https://github.com/wojtekmach/req).
 
 ## Installation
 
@@ -12,116 +15,120 @@ def deps do
 end
 ```
 
-## Example: Chat App
+## Data plane
 
-A chat app where each room gets its own stream. Messages are Ecto embedded schemas, durably ordered, and listeners tail the stream in real time.
+Start a client for one basin under your supervisor, with a name:
 
 ```elixir
-alias MyApp.Chat
-alias MyApp.Chat.Message
-
-# Create rooms (each becomes its own S2 stream)
-Chat.create_room("general")
-Chat.create_room("random")
-
-# Append typed messages
-Chat.append("general", Message.new(user: "alice", text: "hey everyone!"))
-Chat.append("general", Message.new(user: "bob", text: "hi alice!"))
-Chat.append("random", Message.new(user: "alice", text: "anyone here?"))
-
-# Listen to a room — tails the stream, calling your function for each message
-{:ok, listener} = Chat.listen("general", fn %Message{} = msg ->
-  IO.puts("[#{msg.ts}] #{msg.user}: #{msg.text}")
-end)
-# [2026-02-25T14:30:00Z] alice: hey everyone!
-# [2026-02-25T14:30:01Z] bob: hi alice!
-# ... stays open, prints new messages as they arrive
-
-# Stop listening when done
-Chat.stop_listener(listener)
-
-# Listen for only new messages (skip history)
-Chat.listen("general", fn msg -> IO.inspect(msg) end, from: :tail)
+children = [
+  {S2,
+   name: MyApp.S2,
+   basin: "my-basin",
+   token: System.fetch_env!("S2_TOKEN"),
+   basin_endpoint: "https://{basin}.b.s2.dev"}
+]
 ```
 
-Here's the implementation. `S2.Store` manages connections, serialization, and session lifecycle — like `Ecto.Repo` for streams. It handles chunking, framing, and deduplication automatically (see [Patterns](#patterns)), so you just work with your own types.
+Then call it by that name from any process:
 
 ```elixir
-# config/config.exs
-config :my_app, MyApp.S2,
-  base_url: "https://aws.s2.dev",
-  token: System.get_env("S2_TOKEN"),
-  max_retries: :infinity, # reconnection attempts before giving up (default: :infinity)
-  base_delay: 500,      # base delay in ms for exponential backoff (default: 500)
-  max_queue_size: 1000   # pending appends per stream before {:error, :overloaded} (default: 1000)
+records = [%S2.V1.AppendRecord{body: "hello"}]
+{:ok, %S2.V1.AppendAck{start: %{seq_num: 0}, end: %{seq_num: 1}}} =
+  S2.append(MyApp.S2, "chat/general", records)
+
+{:ok, %S2.V1.ReadBatch{records: [%{seq_num: 0, body: "hello"}]}} =
+  S2.read(MyApp.S2, "chat/general", seq_num: 0)
+
+{:ok, %S2.V1.StreamPosition{seq_num: 1}} = S2.check_tail(MyApp.S2, "chat/general")
 ```
 
+Follow a stream; the records come to the calling process as messages:
+
 ```elixir
-# lib/my_app/s2.ex
-defmodule MyApp.S2 do
-  use S2.Store,
-    otp_app: :my_app,
-    basin: "my-app"
+{:ok, listener} = S2.listen(MyApp.S2, "chat/general", from: 0)   # or from: :tail
+
+receive do
+  {S2, ^listener, {:records, [%S2.V1.SequencedRecord{seq_num: 0, body: "hello"}]}} -> :ok
+  {S2, ^listener, {:error, %S2.Error{}}} -> :refused_for_good
+end
+
+:ok = S2.stop_listener(MyApp.S2, "chat/general", listener)
+```
+
+What a caller can count on:
+
+- **An append is one unit.** Its records (at most 1000 and 1 MiB) land together, in order, and the ack carries that call's own range.
+- **`{:ok, ack}` or a real answer.** A dropped connection, a reset, or S2 asking to reconnect is retried on a new session with the same bytes. A caller only sees `{:error, %S2.Error{}}` when S2 refuses the records for good, or `{:error, :timeout}` when its `:timeout` (default 5 000 ms) passes, and then the records may or may not have been appended.
+- **Retries can duplicate.** A batch S2 wrote but never acknowledged is written again. `S2.Patterns` (below) stamps records so readers drop the copies.
+- **A listener never skips and never repeats.** A dropped or silent read session is opened again from after the last record it delivered. It ends only when S2 refuses the read, or the listening process exits.
+- **Appends to one stream keep their order**, from any number of callers: a stream always uses the same connection.
+
+### Options
+
+| Option | Default | What it does |
+|---|---|---|
+| `:name` | required | The name every call takes. |
+| `:basin` | required | |
+| `:basin_endpoint` | `"http://localhost:4243"` | Where records go. `{basin}` is replaced by the basin's name; without it, the basin goes in an `s2-basin` header, as S2 Lite needs. |
+| `:token` | `nil` | Bearer token. |
+| `:pool_size` | `4` | HTTP/2 connections. |
+| `:max_sent_bytes` | 5 MiB | Unacknowledged bytes per stream before new batches wait. |
+| `:idle_after` | 5 000 ms | An append session with nothing to send this long is closed. |
+| `:heartbeat_deadline` | 20 000 ms | A read session silent this long, or an append unacknowledged this long, drops the connection. S2 sends a heartbeat at least every 15 s. |
+| `:connect_timeout`, `:transport_opts` | 5 000 ms, `[]` | Passed to Mint. |
+
+### How it works
+
+```
+{S2, name: MyApp.S2}               Supervisor
+├── MyApp.S2.Connection_0          S2.Connection: one HTTP/2 connection
+│     appends   "chat/general" => S2.AppendStream + its append session
+│     listeners  #Ref<...>     => pid, stream, next seq_num, read session
+├── MyApp.S2.Connection_1
+└── ...                            a stream always maps to phash2(stream, pool_size)
+```
+
+- **One process owns each socket**, the way [Finch](https://github.com/sneako/finch) does: callers `GenServer.call` it, and it handles the socket's messages. Mint delivers socket data to the owner's mailbox, so this is the only safe shape.
+- **Many streams share a connection.** Each append session and read session is one HTTP/2 request on it, so a thousand followed streams cost a few sockets, not a thousand.
+- **Appends batch themselves.** `S2.AppendStream` (pure, no socket) queues calls. With nothing in flight a call goes at once, alone; while batches are in flight, calls collect until they fill a batch (1000 records or 1 MiB, never splitting a call). Batches are pipelined up to `:max_sent_bytes`, as S2's own SDKs do.
+- **Each batch is encoded once.** When a session fails, its unacknowledged batches go again first, byte for byte, then new ones. A refusal for good (a 4xx terminal frame) fails only the oldest batch's callers.
+- **S2's drain signal is followed.** A frame flagged "reconnect" stops new sends on that session and half-closes it once what's out is sent; the next batches go on a new session.
+- **Silence is a dead connection.** A read session gets a frame (records or a heartbeat) at least every 15 s. If one is silent past `:heartbeat_deadline`, or an append waits that long for its ack, the connection is dropped and made again with backoff from 100 ms to 5 s. Every session moves to the new connection.
+- **The server's request limit is respected.** S2 allows 128 open requests per connection. At the limit, an append session with nothing in flight is closed to make room; with none idle, a stream waits for a request to end. Size `:pool_size` for the streams you append to and follow at once.
+- **HTTP/2 flow control is respected.** Bytes beyond the send window wait for the server's window update.
+
+## Patterns
+
+Records go to S2 as given. `S2.Patterns` adds what a typed message stream needs on top, mirroring the [TypeScript SDK patterns](https://github.com/s2-streamstore/s2-sdk-typescript/tree/main/packages/patterns):
+
+| Step | Write side | Read side |
+|------|-----------|-----------|
+| 1 | Serialize term to binary | Filter duplicate records |
+| 2 | Chunk binary into sub-1 MiB pieces | Reassemble chunks into complete message |
+| 3 | Frame chunks with reassembly headers | Deserialize binary back to term |
+| 4 | Stamp with writer ID + dedupe sequence | |
+
+```elixir
+alias S2.Patterns.Serialization
+
+serializer = %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
+
+# Writing: serialize, chunk, frame, and stamp for dedupe
+writer = Serialization.writer()
+{input, writer} = Serialization.prepare(writer, %{"event" => "signup"}, serializer)
+{:ok, _ack} = S2.append(MyApp.S2, "events", input.records)
+
+# Reading: drop duplicates, reassemble, and deserialize
+reader = Serialization.reader()
+{:ok, listener} = S2.listen(MyApp.S2, "events", from: 0)
+
+receive do
+  {S2, ^listener, {:records, records}} ->
+    {[%{"event" => "signup"}], reader} = Serialization.decode(reader, records, serializer)
 end
 ```
 
-```elixir
-# lib/my_app/chat/message.ex
-defmodule MyApp.Chat.Message do
-  use Ecto.Schema
-  import Ecto.Changeset
-
-  @derive Jason.Encoder
-  @primary_key false
-  embedded_schema do
-    field :user, :string
-    field :text, :string
-    field :ts, :utc_datetime
-  end
-
-  def new(attrs) do
-    %__MODULE__{ts: DateTime.utc_now()}
-    |> changeset(Map.new(attrs))
-    |> apply_action!(:new)
-  end
-
-  def changeset(message \\ %__MODULE__{}, attrs) do
-    message
-    |> cast(attrs, [:user, :text, :ts])
-    |> validate_required([:user, :text])
-  end
-
-  def serializer do
-    %{
-      serialize: &Jason.encode!/1,
-      deserialize: fn json ->
-        attrs = Jason.decode!(json)
-        %__MODULE__{} |> cast(attrs, [:user, :text, :ts]) |> apply_action!(:load)
-      end
-    }
-  end
-end
-```
-
-```elixir
-# lib/my_app/application.ex
-def start(_type, _args) do
-  children = [
-    MyApp.S2
-  ]
-
-  Supervisor.start_link(children, strategy: :one_for_one)
-end
-```
-
-```elixir
-# lib/my_app/chat.ex
-defmodule MyApp.Chat do
-  use MyApp.S2, serializer: MyApp.Chat.Message.serializer()
-
-  def create_room(room), do: create_stream("chat/#{room}")
-end
-```
+Keep one writer per process that appends, so its dedupe sequence stays in order.
 
 ## Control Plane
 
@@ -188,143 +195,14 @@ You can also scope tokens to specific operations via the `ops` field (e.g. `["re
 {:ok, metrics} = S2.Metrics.stream_metrics("my-basin", "my-stream", server: client)
 ```
 
-## Data Plane
-
-Data plane operations use S2S-framed protobuf over a persistent Mint HTTP/2 connection. All calls return an updated `conn` for connection reuse.
-
-### Single Request
-
-```elixir
-{:ok, conn} = S2.S2S.Connection.open("https://aws.s2.dev")
-
-# Append records
-input = %S2.V1.AppendInput{records: [%S2.V1.AppendRecord{body: "hello"}]}
-{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-basin", "my-stream", input)
-
-# Read records
-{:ok, batch, conn} = S2.S2S.Read.call(conn, "my-basin", "my-stream", seq_num: 0)
-
-# Check tail position
-{:ok, position, conn} = S2.S2S.CheckTail.call(conn, "my-basin", "my-stream")
-```
-
-### Streaming Append
-
-```elixir
-{:ok, session} = S2.S2S.AppendSession.open(conn, "my-basin", "my-stream")
-
-input = %S2.V1.AppendInput{records: [%S2.V1.AppendRecord{body: "event-1"}]}
-{:ok, ack, session} = S2.S2S.AppendSession.append(session, input)
-
-{:ok, session} = S2.S2S.AppendSession.close(session)
-```
-
-### Streaming Read
-
-```elixir
-{:ok, session} = S2.S2S.ReadSession.open(conn, "my-basin", "my-stream", seq_num: 0)
-
-{:ok, batch, session} = S2.S2S.ReadSession.next_batch(session)
-# batch.records contains the records
-
-{:ok, session} = S2.S2S.ReadSession.close(session)
-```
-
-Read options: `:seq_num`, `:count`, `:wait`, `:until`, `:clamp`, `:tail_offset`.
-
-### Process Affinity
-
-Streaming sessions are **not safe to share across processes**. The underlying Mint connection delivers TCP messages to the owning process's mailbox. Create and use sessions within the same process.
-
-## Patterns
-
-`S2.Store` automatically handles all of this for you. You only need this section if you're using the data plane directly.
-
-Under the hood, every `append` and `listen` call runs through a pipeline that handles chunking, framing, deduplication, and serialization — mirroring the [TypeScript SDK patterns](https://github.com/s2-streamstore/s2-sdk-typescript/tree/main/packages/patterns).
-
-| Step | Write side | Read side |
-|------|-----------|-----------|
-| 1 | Serialize term to binary | Filter duplicate records |
-| 2 | Chunk binary into sub-1 MiB pieces | Reassemble chunks into complete message |
-| 3 | Frame chunks with reassembly headers | Deserialize binary back to term |
-| 4 | Stamp with writer ID + dedupe sequence | |
-
-If you're working with the data plane directly, you can use the patterns modules yourself:
-
-```elixir
-alias S2.Patterns.Serialization
-
-serializer = %{serialize: &Jason.encode!/1, deserialize: &Jason.decode!/1}
-
-# Writing — serialize, chunk, frame, and stamp for dedup
-writer = Serialization.writer()
-{input, writer} = Serialization.prepare(writer, %{"event" => "signup"}, serializer)
-{:ok, ack, conn} = S2.S2S.Append.call(conn, "my-basin", "my-stream", input)
-
-# Reading — dedup, reassemble, and deserialize
-reader = Serialization.reader()
-{:ok, batch, conn} = S2.S2S.Read.call(conn, "my-basin", "my-stream", seq_num: 0)
-{messages, reader} = Serialization.decode(reader, batch.records, serializer)
-```
-
-## Architecture
-
-### How `S2.Store` works
-
-When you call `MyApp.S2.append("chat/general", message)`, here's what happens:
-
-```
-MyApp.S2 (Supervisor)
-├── Registry          — maps stream names to worker pids
-├── DynamicSupervisor — owns stream workers
-│   ├── StreamWorker("chat/general")  — own connection + open AppendSession
-│   ├── StreamWorker("chat/random")   — own connection + open AppendSession
-│   └── ...started lazily on first append
-├── ControlPlane      — shared JSON client for create/delete stream
-└── listener Tasks    — each spawned with own connection + ReadSession
-```
-
-- **One process per stream.** Each stream gets its own `StreamWorker` GenServer with a dedicated Mint HTTP/2 connection and a persistent `AppendSession`. Appends to different streams run in parallel.
-- **Workers start lazily.** The first `append("chat/general", ...)` starts a worker for that stream. Subsequent appends reuse the open session — no handshake overhead.
-- **Listeners are independent.** Each `listen` call spawns a Task with its own connection and `ReadSession`, tailing the stream and calling your callback as messages arrive. This is required because Mint delivers TCP data to the owning process's mailbox.
-- **Control plane is shared.** `create_stream` and `delete_stream` go through a single `ControlPlane` GenServer using the JSON/Req client. These are infrequent operations that don't need per-stream isolation.
-- **Automatic reconnection with backoff.** If a TCP connection drops, both appends and listeners reconnect transparently with exponential backoff (configurable via `max_retries` and `base_delay`). Append workers detect the failure on the next send, open a new connection and session, and retry — the caller just gets back `{:ok, ack}`. Listeners detect the drop when the read times out, then reconnect from the last successfully read sequence number so no messages are lost. The dedupe writer preserves its ID and sequence across reconnects, so if a message was written but the ack was lost, readers filter the duplicate automatically.
-- **Backpressure.** Each stream worker monitors its mailbox depth. If pending appends exceed `max_queue_size`, the worker returns `{:error, :overloaded}` immediately instead of buffering without bound.
-- **Telemetry.** All operations emit `:telemetry` events under the `[:s2, :store, ...]` prefix — append start/stop/exception, reconnect attempts, and listener connections. Attach your own handlers for metrics, logging, or alerting.
-
-### Protocol layers
-
-| Layer | Transport | Encoding | Library |
-|-------|-----------|----------|---------|
-| `S2.Store` | Managed | Managed | — |
-| Control plane (basins, streams, tokens, metrics) | HTTP/1.1 or 2 | JSON | Req |
-| Data plane (append, read, check tail) | HTTP/2 | S2S-framed Protobuf | Mint |
-
-`S2.Store` is the recommended way to use the SDK. The control and data plane modules below it are available if you need lower-level access.
-
-## Guarantees
-
-### From S2 (the server)
-
-- **Durability.** Appended records are persisted and survive restarts.
-- **Ordering.** Records within a stream are totally ordered by sequence number.
-- **At-least-once delivery.** Readers see every record at least once.
-
-### From this SDK
-
-- **Automatic reconnection.** If a TCP connection drops, appends reconnect and retry transparently with exponential backoff. Listeners reconnect from the last read sequence number — no messages are lost.
-- **No duplicates.** Each writer stamps records with a unique ID and monotonic sequence. If a message was written but the ack was lost, the retry produces a duplicate on the wire, but readers filter it out automatically.
-- **Large message support.** Messages over 1 MiB are chunked on write and reassembled on read. You don't need to think about record size limits.
-- **Stream isolation.** Each stream gets its own process and connection. A slow or failed stream doesn't block others.
-- **Backpressure.** Stream workers reject appends with `{:error, :overloaded}` when the mailbox exceeds `max_queue_size`, preventing unbounded memory growth.
-- **Supervised workers.** Stream workers are managed by a DynamicSupervisor. If a worker crashes, the supervisor restarts it and the next append picks up where it left off.
-- **Validate on write, not on read.** Serializers cast fields on read without validation, so schema changes don't break deserialization of old messages.
-
 ## Testing
 
-98.8% test coverage (with Toxiproxy network fault tests). The remaining uncovered lines are exhaustive pattern match arms that can't be triggered — see `test/test_helper.exs` for details.
+Tests run against [S2 Lite](https://github.com/s2-streamstore/s2) on `localhost:4243`. The `:proxy` tests also need [Toxiproxy](https://github.com/Shopify/toxiproxy) on `localhost:8474`, and put it between the client and S2 Lite to reset connections, black-hole them, and add latency:
 
-Coverage threshold is set to 95% — CI fails if coverage drops below that.
+```sh
+mix test                   # without the Toxiproxy tests
+mix test --include proxy   # everything, as CI runs it
+```
 
 ## License
 

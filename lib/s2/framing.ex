@@ -1,4 +1,4 @@
-defmodule S2.S2S.Framing do
+defmodule S2.Framing do
   @moduledoc """
   S2S wire framing: encode/decode length-prefixed frames with compression.
 
@@ -13,12 +13,18 @@ defmodule S2.S2S.Framing do
 
   @terminal_bit 0x80
   @compression_mask 0x60
+  @reconnect_bit 0x10
   # Note: the 24-bit length prefix naturally caps frames at ~16 MiB (0xFFFFFF bytes).
   # No additional length validation is needed.
 
   @type compression :: :none | :zstd | :gzip | :unknown
 
-  @type frame :: %{terminal: boolean(), compression: compression(), body: binary()}
+  @type frame :: %{
+          terminal: boolean(),
+          reconnect: boolean(),
+          compression: compression(),
+          body: binary()
+        }
 
   @doc """
   Encode a binary body into an S2S frame with optional compression.
@@ -74,7 +80,13 @@ defmodule S2.S2S.Framing do
 
     case decompress(body, compression) do
       {:ok, decompressed} ->
-        {:ok, %{terminal: terminal, compression: compression, body: decompressed}, rest}
+        {:ok,
+         %{
+           terminal: terminal,
+           reconnect: (flags &&& @reconnect_bit) != 0,
+           compression: compression,
+           body: decompressed
+         }, rest}
 
       {:error, reason} ->
         {:error, reason}

@@ -46,4 +46,27 @@ defmodule S2.Error do
   def from_response(%{status: status, body: _body}) do
     %__MODULE__{status: status}
   end
+
+  @doc "An error from an HTTP status and its JSON (or plain) body."
+  def from_http(status, body) do
+    case Jason.decode(body) do
+      {:ok, %{"code" => code, "message" => message}} ->
+        %__MODULE__{status: status, code: code, message: message}
+
+      _other ->
+        %__MODULE__{status: status, message: body}
+    end
+  end
+
+  @doc "An error from a terminal S2S frame: a 2-byte status, then the JSON body."
+  def from_terminal(<<status::16-big, body::binary>>), do: from_http(status, body)
+  def from_terminal(body), do: %__MODULE__{message: "malformed terminal frame: #{inspect(body)}"}
+
+  @doc """
+  Whether trying again may succeed: a timeout, throttling, a server error
+  (including `server_draining`), a `transaction_conflict` (as when appends
+  race to create a stream), or no status at all (the connection failed).
+  """
+  def retryable?(%__MODULE__{status: status, code: code}),
+    do: status in [nil, 408, 429] or status >= 500 or code == "transaction_conflict"
 end
