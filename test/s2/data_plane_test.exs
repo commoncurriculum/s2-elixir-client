@@ -213,6 +213,41 @@ defmodule S2.DataPlaneTest do
     assert log =~ "S2 read session on #{stream} ended, reopening in 100 ms"
   end
 
+  test "a fencing token or a seq_num to match refuses only its own call, and calls with other conditions are batched apart",
+       %{name: name} do
+    stream = unique_stream_name()
+
+    fence = %S2.V1.AppendRecord{
+      headers: [%S2.V1.Header{name: "", value: "fence"}],
+      body: "mine"
+    }
+
+    assert {:ok, %{start: %{seq_num: 0}}} = S2.append(name, stream, [fence], match_seq_num: 0)
+
+    assert {:ok, %{start: %{seq_num: 1}}} =
+             S2.append(name, stream, [record("a")], fencing_token: "mine")
+
+    calls =
+      [
+        fn -> S2.append(name, stream, [record("theirs")], fencing_token: "theirs") end,
+        fn -> S2.append(name, stream, [record("stale")], match_seq_num: 1) end,
+        fn -> S2.append(name, stream, [record("b")], fencing_token: "mine") end,
+        fn -> S2.append(name, stream, [record("plain")]) end
+      ]
+      |> Enum.map(&Task.async/1)
+      |> Enum.map(&Task.await/1)
+
+    assert [
+             {:error, %S2.Error{code: "fencing_token_mismatch"}},
+             {:error, %S2.Error{code: "seq_num_mismatch"}},
+             {:ok, _b},
+             {:ok, _plain}
+           ] = calls
+
+    assert {:ok, batch} = S2.read(name, stream, seq_num: 1, count: 10)
+    assert Enum.sort(bodies(batch.records)) == ["a", "b", "plain"]
+  end
+
   test "a read session's heartbeats keep it open", %{name: name} do
     stream = unique_stream_name()
     {:ok, _ack} = S2.append(name, stream, [record("a")])

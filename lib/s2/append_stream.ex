@@ -18,7 +18,7 @@ defmodule S2.AppendStream do
   @max_records 1000
   @max_bytes 1024 * 1024
 
-  # queue: %{from:, records:, bytes:, deadline:}
+  # queue: %{from:, records:, bytes:, deadline:, conditions:}
   # sent and resend: %{callers: [{from, count}], frame:, bytes:}, oldest first
   defstruct queue: :queue.new(), sent: :queue.new(), resend: :queue.new(), sent_bytes: 0
 
@@ -26,8 +26,9 @@ defmodule S2.AppendStream do
 
   @doc """
   Queues one call's records, or refuses records that can't fit one batch.
+  `conditions` holds the call's `:fencing_token` and `:match_seq_num`, if any.
   """
-  def push(stream, from, records, deadline) do
+  def push(stream, from, records, deadline, conditions \\ %{}) do
     bytes = records |> Enum.map(&metered_bytes/1) |> Enum.sum()
 
     cond do
@@ -38,7 +39,14 @@ defmodule S2.AppendStream do
         {:error, :batch_too_large}
 
       true ->
-        call = %{from: from, records: records, bytes: bytes, deadline: deadline}
+        call = %{
+          from: from,
+          records: records,
+          bytes: bytes,
+          deadline: deadline,
+          conditions: conditions
+        }
+
         {:ok, %{stream | queue: :queue.in(call, stream.queue)}}
     end
   end
@@ -125,7 +133,15 @@ defmodule S2.AppendStream do
 
     if calls != [] and
          (not sent?(stream) or (full and stream.sent_bytes + bytes <= max_sent_bytes)) do
-      {:ok, iodata, _size} = Protox.encode(%S2.V1.AppendInput{records: records})
+      conditions = hd(calls).conditions
+
+      {:ok, iodata, _size} =
+        Protox.encode(%S2.V1.AppendInput{
+          records: records,
+          fencing_token: conditions[:fencing_token],
+          match_seq_num: conditions[:match_seq_num]
+        })
+
       frame = Framing.encode(IO.iodata_to_binary(iodata))
 
       batch = %{
@@ -147,14 +163,18 @@ defmodule S2.AppendStream do
     end
   end
 
-  # The longest run of whole calls that fits one batch.
+  # The longest run of whole calls with the same conditions that fits one
+  # batch. A call matching a seq_num goes alone: S2 checks the batch's start.
   defp fill(queue, calls, count, bytes) do
     case :queue.peek(queue) do
       {:value, call}
-      when count + length(call.records) <= @max_records and bytes + call.bytes <= @max_bytes ->
+      when count + length(call.records) <= @max_records and bytes + call.bytes <= @max_bytes and
+             (calls == [] or
+                (call.conditions == hd(calls).conditions and
+                   not is_map_key(call.conditions, :match_seq_num))) ->
         fill(:queue.drop(queue), [call | calls], count + length(call.records), bytes + call.bytes)
 
-      _full_or_empty ->
+      _full_different_or_empty ->
         {Enum.reverse(calls), queue}
     end
   end
