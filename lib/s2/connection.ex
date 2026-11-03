@@ -88,7 +88,7 @@ defmodule S2.Connection do
   end
 
   @impl true
-  def handle_call({:append, stream, records, deadline}, from, state) do
+  def handle_call({:append, stream, records, deadline, conditions}, from, state) do
     entry =
       Map.get(state.appends, stream, %{
         queue: AppendStream.new(),
@@ -101,7 +101,7 @@ defmodule S2.Connection do
         delay: 100
       })
 
-    case AppendStream.push(entry.queue, from, records, deadline) do
+    case AppendStream.push(entry.queue, from, records, deadline, conditions) do
       {:ok, queue} ->
         state = put_in(state.appends[stream], %{entry | queue: queue})
         {:noreply, send_appends(state, stream)}

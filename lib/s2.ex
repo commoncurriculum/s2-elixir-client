@@ -105,11 +105,18 @@ defmodule S2 do
   range, `{:error, %S2.Error{}}` when S2 refuses them, or `{:error, :timeout}`
   after `:timeout` milliseconds (default 5 000), when they may or may not
   have been appended.
+
+  `:fencing_token` appends only while the stream's token (set by a `fence`
+  command record) is this one. `:match_seq_num` appends only if the stream's
+  tail is that number. A call with either is batched only with calls that
+  give the same, and one with `:match_seq_num` goes alone, so S2 refusing it
+  fails no other call.
   """
   def append(name, stream, records, options \\ []) do
     timeout = Keyword.get(options, :timeout, 5_000)
     deadline = System.monotonic_time(:millisecond) + timeout
-    call(name, stream, {:append, stream, records, deadline}, timeout)
+    conditions = Map.new(Keyword.take(options, [:fencing_token, :match_seq_num]))
+    call(name, stream, {:append, stream, records, deadline, conditions}, timeout)
   end
 
   @doc """
