@@ -53,6 +53,12 @@ defmodule S2.Error do
       {:ok, %{"code" => code, "message" => message}} ->
         %__MODULE__{status: status, code: code, message: message}
 
+      {:ok, %{"fencing_token_mismatch" => token}} ->
+        %__MODULE__{status: status, code: "fencing_token_mismatch", message: token}
+
+      {:ok, %{"seq_num_mismatch" => tail}} ->
+        %__MODULE__{status: status, code: "seq_num_mismatch", message: "the tail is #{tail}"}
+
       _other ->
         %__MODULE__{status: status, message: body}
     end

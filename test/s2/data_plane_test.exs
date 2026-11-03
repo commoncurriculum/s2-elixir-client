@@ -238,8 +238,8 @@ defmodule S2.DataPlaneTest do
       |> Enum.map(&Task.await/1)
 
     assert [
-             {:error, %S2.Error{}},
-             {:error, %S2.Error{}},
+             {:error, %S2.Error{code: "fencing_token_mismatch"}},
+             {:error, %S2.Error{code: "seq_num_mismatch"}},
              {:ok, _b},
              {:ok, _plain}
            ] = calls
